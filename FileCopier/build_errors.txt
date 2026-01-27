@@ -1,0 +1,43 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(84,29): warning CS8602: Dereference of a possibly null reference. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\Program.cs(21,44): warning CS8604: Possible null reference argument for parameter 'config' in 'iPhoneConnect.iPhoneConnect(AppConfig config)'. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\Program.cs(26,49): warning CS8602: Dereference of a possibly null reference. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(108,32): warning CS8602: Dereference of a possibly null reference. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(165,56): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(166,57): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(222,33): warning CS8602: Dereference of a possibly null reference. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(242,68): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(243,69): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(361,17): error CS0128: A local variable or function named 'sourceFiles' is already defined in this scope [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(362,36): error CS0103: The name 'sourceFolders' does not exist in the current context [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(364,30): error CS0103: The name 'sourceFolders' does not exist in the current context [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(379,34): error CS0103: The name 'sourceFolders' does not exist in the current context [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(416,45): error CS1503: Argument 1: cannot convert from '(var, string)' to '(MediaDevices.MediaFileInfo Info, string RelativePath)' [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(308,44): warning CS8600: Converting null literal or possible null value to non-nullable type. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(543,57): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(544,58): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+
+Build FAILED.
+
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(84,29): warning CS8602: Dereference of a possibly null reference. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\Program.cs(21,44): warning CS8604: Possible null reference argument for parameter 'config' in 'iPhoneConnect.iPhoneConnect(AppConfig config)'. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\Program.cs(26,49): warning CS8602: Dereference of a possibly null reference. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(108,32): warning CS8602: Dereference of a possibly null reference. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(165,56): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(166,57): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(222,33): warning CS8602: Dereference of a possibly null reference. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(242,68): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(243,69): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(308,44): warning CS8600: Converting null literal or possible null value to non-nullable type. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(543,57): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(544,58): warning CS8629: Nullable value type may be null. [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(361,17): error CS0128: A local variable or function named 'sourceFiles' is already defined in this scope [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(362,36): error CS0103: The name 'sourceFolders' does not exist in the current context [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(364,30): error CS0103: The name 'sourceFolders' does not exist in the current context [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(379,34): error CS0103: The name 'sourceFolders' does not exist in the current context [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+D:\work\iPhone\FileCopier\FileCopier\iPhoneConnect.cs(416,45): error CS1503: Argument 1: cannot convert from '(var, string)' to '(MediaDevices.MediaFileInfo Info, string RelativePath)' [D:\work\iPhone\FileCopier\FileCopier\iPhonePhotoCopier.csproj]
+    12 Warning(s)
+    5 Error(s)
+
+Time Elapsed 00:00:01.01
