@@ -1,573 +1,294 @@
-﻿using MediaDevices;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Reflection;
-using System.Text;
-using System.Collections.Concurrent;
-using System.Threading;
-using System.Threading.Tasks;
+using MediaDevices;
 
-namespace FileCopier
+namespace FileCopier;
+
+internal sealed class iPhoneConnect : IDisposable
 {
-    internal class iPhoneConnect
+    private readonly AppConfig config;
+    private readonly Stopwatch stopwatch = new();
+    private MediaDevice? device;
+
+    public iPhoneConnect(AppConfig config)
     {
-        public const string DCIMFolder = @"\\Internal Storage\DCIM";
-        private AppConfig _config;
+        this.config = config;
+    }
 
-        public iPhoneConnect(AppConfig config) 
-        { 
-            _config = config;
-            CopyToBasePath = config.DestinationPath;
-        }
+    public string PhoneName => device?.FriendlyName ?? device?.Description ?? "iPhone";
+    public int FolderCount { get; private set; }
+    public int DiscoveredFolderCount { get; private set; }
+    public int FoundFiles { get; private set; }
+    public int CopiedFiles { get; private set; }
+    public int SkippedFiles { get; private set; }
+    public int ExcludedFiles { get; private set; }
+    public ulong CopiedBytes { get; private set; }
+    public List<(string Path, string Message)> Errors { get; } = [];
 
-        public string CopyToBasePath { get; set; }
-        public int TotalFiles { get; set; } = 0;
-        public ulong TotalFileSize { get; set; } = 0;
-        public MediaDevice? Device { get; set; } = null;
-        public bool IsPhoneAvailable { get => Device != null; }
-
-        public string[] Folders { get; set; } = new string[0];
-        public int FolderCount { get => Folders.Length; }
-
-        public List<string> Files { get; set; } = new List<string>();
-        public int FilesCount { get => Files.Count; }
-
-        public List<MediaFileInfo> FilesInfo { get; set; } = new List<MediaFileInfo>();
-
-        public List<(string FileName, string Message)> Errors { get; set; } = new List<(string FileName, string Message)>();
-
-        Stopwatch stopWatch = new Stopwatch();
-
-        string elapsedTimeString {
-            get {
-                stopWatch.Stop();
-                var val = $"{ConsoleUtils.GREY}{stopWatch.Elapsed.Hours:00}:{stopWatch.Elapsed.Minutes:00}:{stopWatch.Elapsed.Seconds:00}{ConsoleUtils.NORMAL}";
-                stopWatch.Start();
-                return val;
-            }
-        }
-        public bool Connect()
+    public void Connect()
+    {
+        var devices = MediaDeviceManager.Instance.GetDevices()?.ToList() ?? [];
+        var phones = devices.Where(IsApplePhone).ToList();
+        if (phones.Count != 1)
         {
-            var devices = MediaDevice.GetDevices();
-            Device = devices?.FirstOrDefault(d => d.FriendlyName == "Apple iPhone");
-            if (Device == null) return false;
-
-            Device.Connect();
-            var drives = Device.GetDrives();
-            var drive = drives.FirstOrDefault(d => d.Name == "\\Internal Storage");
-
-            var root = drive?.RootDirectory;
-
-            var folders = root?.EnumerateDirectories();
-
-            //Folders = Device.GetDirectories(DCIMFolder);
-            return true;
-        }
-        public void Disconnect()
-        {
-            Device?.Disconnect();
+            var available = string.Join(", ", devices.Select(d => d.FriendlyName ?? d.Description ?? "Unnamed device"));
+            throw new InvalidOperationException(phones.Count == 0
+                ? $"No iPhone found. Available devices: {(available.Length == 0 ? "none" : available)}. Unlock iPhone and allow this computer to access photos."
+                : "Multiple Apple devices found. Connect only the iPhone you want to copy.");
         }
 
-        public bool CollectFiles()
+        // Keep the selected device for cleanup even if opening the connection fails.
+        device = phones[0];
+        // Request a fresh file listing rather than the driver's cached folder view.
+        device.Connect(access: MediaDeviceAccess.GenericRead, enableCache: false);
+        // Do not call GetDrives(): some iPhone/driver versions fail when storage
+        // properties are requested (0x80042008), although folder access still works.
+    }
+
+    private static bool IsApplePhone(MediaDevice candidate)
+    {
+        return candidate.FriendlyName?.Contains("iPhone", StringComparison.OrdinalIgnoreCase) == true
+            || candidate.Description?.Contains("iPhone", StringComparison.OrdinalIgnoreCase) == true
+            || candidate.Manufacturer?.Contains("Apple", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    public void Diagnose()
+    {
+        var connectedDevice = RequireDevice();
+        Console.WriteLine($"Phone: {PhoneName}");
+        Console.WriteLine($"Source Path: {config.SourcePath}");
+        Console.WriteLine("Read-only diagnosis; no photos will be downloaded.");
+        Console.WriteLine("Folders visible at device root:");
+        foreach (var directory in connectedDevice.GetRootDirectory().EnumerateDirectories("*"))
         {
-            
-            ConsoleUtils.WriteLine("\nCollecting file names...");
-            if (!IsPhoneAvailable) return false;
-            Files.Clear();
-            var processedFolderCount = 0;
-            var collectedFiilesCount = 0;
-            foreach (var folder in Folders)
+            Console.WriteLine($" - {directory.FullName}");
+        }
+
+        var source = connectedDevice.GetDirectoryInfo(config.SourcePath);
+        var folders = source.EnumerateDirectories("*").ToList();
+        var files = source.EnumerateFiles("*").Count();
+        Console.WriteLine($"Source accessible: {folders.Count} immediate folders, {files} immediate files.");
+        foreach (var folder in folders)
+        {
+            Console.WriteLine($" - {folder.FullName}");
+        }
+    }
+
+    public void CopyPhotos(CancellationToken cancellationToken, bool scanOnly = false,
+        IReadOnlySet<string>? excludedFiles = null)
+    {
+        var connectedDevice = RequireDevice();
+        FolderCount = FoundFiles = CopiedFiles = SkippedFiles = ExcludedFiles = 0;
+        DiscoveredFolderCount = 1;
+        CopiedBytes = 0;
+        Errors.Clear();
+        stopwatch.Restart();
+
+        try
+        {
+            CheckCancellation(cancellationToken);
+            ConsoleUtils.WriteLine("\nReading iPhone folders (Q or Ctrl+C stops after the current operation)...");
+            // Resolve the configured path from the device root, without drive metadata.
+            var source = connectedDevice.GetDirectoryInfo(config.SourcePath);
+            var sourceFiles = BackupPlan.Create(config.DestinationPath, CollectFiles(source, cancellationToken));
+            FoundFiles = sourceFiles.Count;
+            if (FoundFiles == 0)
             {
-                var files = Device.GetFiles(folder);
-                Files.AddRange(files);
-                collectedFiilesCount += files.Length;
-                processedFolderCount++;
-
-
-                
-                ConsoleUtils.WriteProgress($"{elapsedTimeString} {ConsoleUtils.CYAN}{collectedFiilesCount.ToString("#,##0")} {ConsoleUtils.YELLOW}files, folder", processedFolderCount, FolderCount);
-                
-
+                throw new IOException("No files found in the source. Check SourcePath, unlock iPhone, and allow photo access before retrying.");
             }
-            TotalFileSize = 0;
-            TotalFiles = Files.Count;
-            return true;
-        }
-        public bool CollectFilesInfo()
-        {
-            if (!CollectFiles()) return false;
-            ConsoleUtils.WriteLine("\nCollecting fileinfo...");
-            FilesInfo.Clear();
-            var processedFilesCount = 0;
-            ulong collectedFiileSize = 0;
-            foreach (var file in Files)
+
+            try
             {
-                var fileInfo = Device.GetFileInfo(file);
-                FilesInfo.Add(fileInfo);
-
-                collectedFiileSize += fileInfo.Length;
-                processedFilesCount++;
-
-                ConsoleUtils.WriteProgress($"{elapsedTimeString} {ConsoleUtils.CYAN}{collectedFiileSize.ToSize()} {ConsoleUtils.YELLOW}file", processedFilesCount, TotalFiles);
-
+                config.ValidateSourceFileCount(FoundFiles);
             }
-            TotalFileSize = (ulong)FilesInfo.Sum(x => (long)x.Length);
-            TotalFiles = FilesInfo.Count;
-
-            return true;
-        }
-        static bool ToCopy(MediaFileInfo mediaFileInfo, string destFile)
-        {
-
-            //Get file info of destFile
-            var fileInfo = new FileInfo(destFile);
-            if (fileInfo == null) return true;
-            //If file does not exist, copy
-            if (!fileInfo.Exists)
-                return true;
-            //If file exists, check date
-            if (fileInfo.LastWriteTime != mediaFileInfo.LastWriteTime)
-                return true;
-            //If date is same, check size
-            if ((ulong)fileInfo.Length != mediaFileInfo.Length)
-                return true;
-            //If size is same, do not copy
-            return false;
-        }
-        public void CopyFiles()
-        {
-            if (!IsPhoneAvailable) return;
-            stopWatch = new Stopwatch();
-            ConsoleUtils.WriteLine("\nCopying files...");
-            CollectFilesInfo();
-
-            var processedFileCount = 0;
-            ulong processedFileSize = 0;
-
-            foreach (var fileInfo in FilesInfo)
+            catch (IOException ex)
             {
+                RecordError(config.SourcePath, ex);
+                throw;
+            }
 
+            if (scanOnly) return;
+
+            // Validate exclusions against the complete plan before any transfer.
+            // Match original phone paths, including when backup names have ID suffixes.
+            var exclusions = BackupPlan.ResolveExclusions(sourceFiles, excludedFiles);
+
+            ConsoleUtils.WriteLine($"\nFound {FoundFiles} files. Checking destination and copying changes...");
+            foreach (var file in sourceFiles)
+            {
+                CheckCancellation(cancellationToken);
+                if (exclusions.Contains(file.RelativePath))
+                {
+                    ExcludedFiles++;
+                    RecordError(file.PhonePath, new IOException("Excluded by request; this source file was not copied or verified."));
+                    continue;
+                }
                 try
                 {
-                    string folderName = Path.GetFileName(fileInfo.Directory.FullName);
-                    var destFolder = Path.Combine(CopyToBasePath, folderName);
-                    var destFile = Path.Combine(destFolder, fileInfo.Name);
-
-                    Directory.CreateDirectory(destFolder);
-
-                    if (ToCopy(fileInfo, destFile))
+                    if (!BackupFile.ShouldCopy(file.DestinationPath, file.Length, file.LastWriteTime))
                     {
-                        Device.DownloadFile(fileInfo.FullName, destFile);
-                        //Set file date time based on fileInfo
-                        File.SetCreationTime(destFile, (DateTime)fileInfo.CreationTime);
-                        File.SetLastWriteTime(destFile, (DateTime)fileInfo.LastWriteTime);
+                        SkippedFiles++;
+                        continue;
                     }
 
-                    processedFileCount++;
-                    processedFileSize += fileInfo.Length;
-                    //·»■▀▄□▪○●▬
-                    //█▌▐░▒▓
-                    ConsoleUtils.ClearLine();
-
-                    ConsoleUtils.Write($"\r{elapsedTimeString} {ConsoleUtils.CYAN}{processedFileSize.GetPercentageCompleted(TotalFileSize)}{ConsoleUtils.YELLOW}, {processedFileSize.ToSize()} / {TotalFileSize.ToSize()} » File ({processedFileCount}/{TotalFiles}) » {destFile} ({fileInfo.Length.ToSize()}) ");
+                    BackupFile.Copy(file.DestinationPath, file.Length, file.CreationTime, file.LastWriteTime,
+                        file.Download);
+                    CopiedFiles++;
+                    CopiedBytes += file.Length;
+                    var relativeDestination = Path.GetRelativePath(config.DestinationPath, file.DestinationPath);
+                    ConsoleUtils.WriteLine($"{stopwatch.Elapsed:hh\\:mm\\:ss} Copied {CopiedFiles}, skipped {SkippedFiles}: {relativeDestination} ({file.Length.ToSize()})");
                 }
-                catch (Exception e)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-
-                    Errors.Add((fileInfo.FullName, e.Message));
-                    ConsoleUtils.WriteError($"\n{fileInfo.FullName} {e.Message}");
+                    RecordError(file.PhonePath, ex);
+                    // A failed WPD read can leave later reads returning the previous
+                    // object's bytes. Equal-sized files would pass length checks.
+                    // End this connection instead of trusting any subsequent transfer.
+                    ConsoleUtils.WriteWarning("Copying stopped at the first failed file. Reconnect the iPhone before retrying a failed transfer.");
+                    throw;
                 }
-
             }
-            stopWatch.Stop();
-            Console.ResetColor();
         }
-        public void CopySequentially()
+        finally
         {
-            ConsoleUtils.WriteLine("\nCopying files...");
-            stopWatch = new Stopwatch();
-            //var totalFiles = 0;
-            //ulong totalProcessedSize = 0;
+            stopwatch.Stop();
+        }
+    }
 
-            //var drives = device.GetDrives();
-            //var folders = Device.GetDirectories(DCIMFolder);
+    private List<SourceFile> CollectFiles(MediaDirectoryInfo source, CancellationToken cancellationToken)
+    {
+        var files = new List<SourceFile>();
+        var root = new SourceFolder(source, "");
+        // Read each native directory listing once. Queue child folders before
+        // processing buffered file metadata so a file error cannot hide descendants.
+        FolderScanner.Scan(root, ReadChildFolders, ReadFiles,
+            (folder, exception) => RecordError(folder.Directory.FullName, exception),
+            () => CheckCancellation(cancellationToken));
+        if (FolderCount != DiscoveredFolderCount)
+        {
+            throw new IOException($"Incomplete source scan: visited {FolderCount} of {DiscoveredFolderCount} discovered folders.");
+        }
+        return files;
 
-            var drives = Device?.GetDrives();
-            var drive = drives?.FirstOrDefault(d => d.Name == "\\Internal Storage");
-            var root = drive?.RootDirectory;
-
-            var directories = root?.EnumerateDirectories();
-            var folders = directories?.Select(x => x.FullName).ToArray();  
-
-            var folderCount = folders?.Length;
-            var curFolderCount = 1;
-            var errorFileCount = 0;
-            var skippedFileCount = 0;
-            //var errorFiles = new StringBuilder();
-            try
+        IEnumerable<SourceFolder> ReadChildFolders(SourceFolder current)
+        {
+            FolderCount++;
+            ConsoleUtils.WriteLine($"Scanning folder {FolderCount}/{DiscoveredFolderCount}: {current.Directory.FullName}...");
+            foreach (var entry in current.Directory.EnumerateFileSystemInfos("*"))
             {
-
-                if (folders != null) 
-                foreach (var folder in folders)
+                CheckCancellation(cancellationToken);
+                if (entry is MediaFileInfo file)
                 {
-                    //var destFolder = $"{CopyToBasePath}{folder.Replace(@"\Internal Storage\DCIM\", "")}";
-
-                    string folderName = Path.GetFileName(folder);
-                    var destFolder = Path.Combine(CopyToBasePath, folderName);
-
-                    Directory.CreateDirectory(destFolder);
-                    var files = Device.GetFiles(folder);
-                    var fileCount = files.Length;
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    ConsoleUtils.ClearLine();
-                    Console.Write($"\r{folder} ({fileCount})");
-                    var curFileCount = 1;
-                    foreach (var file in files)
+                    current.Files.Add(file);
+                    if (current.Files.Count % 100 == 0)
                     {
-
-                        try
-                        {
-                            var fileInfo = Device.GetFileInfo(file);
-                            ulong fileSize = fileInfo.Length;
-
-
-                            var destFilePath = Path.Combine(destFolder, fileInfo.Name);
-                            if (ToCopy(fileInfo, destFilePath))
-                            {
-                                Device.DownloadFile(file, destFilePath);
-                                //Set file date time based on fileInfo
-                                File.SetCreationTime(destFilePath, (DateTime)fileInfo.CreationTime);
-                                File.SetLastWriteTime(destFilePath, (DateTime)fileInfo.LastWriteTime);
-                            }
-                            else
-                            {
-                                skippedFileCount++;
-                            }
-
-                            TotalFiles++;
-                            TotalFileSize += fileSize;
-                            //·»■▀▄□▪○●▬
-                            //█▌▐░▒▓
-                            ConsoleUtils.ClearLine();
-                            var statsStr = skippedFileCount > 0 ? $" {ConsoleUtils.YELLOW}» {ConsoleUtils.BLUE}{skippedFileCount} Skipped" : "";
-                            statsStr += errorFileCount > 0 ? $" » {ConsoleUtils.RED}{errorFileCount} Errors" : "";
-                            var fileRelativePath = Path.Combine(folderName, fileInfo.Name);
-                            ConsoleUtils.Write($"\r{elapsedTimeString} {ConsoleUtils.CYAN}{TotalFileSize.ToSize()}{statsStr} {ConsoleUtils.YELLOW}» File ({curFileCount}/{fileCount}) in folder ({curFolderCount}/{folderCount}) » {ConsoleUtils.GREEN}{fileRelativePath} {ConsoleUtils.CYAN}({fileSize.ToSize()}) ");
-                        }
-                        catch (Exception ex)
-                        {
-                            errorFileCount++;
-                            Console.ForegroundColor = ConsoleColor.Red;
-                            //errorFiles.AppendLine(file);
-                            ConsoleUtils.WriteError($"\n{file} {ex.Message}");
-                            Errors.Add((file, ex.Message));
-                        }
-                        curFileCount++;
+                        ConsoleUtils.WriteLine($"  {current.Directory.FullName}: read metadata for {current.Files.Count} files...");
                     }
-                    curFolderCount++;
+                    continue;
+                }
+
+                if (entry is not MediaDirectoryInfo folder)
+                {
+                    throw new IOException($"Unsupported source entry: {entry.FullName}.");
+                }
+
+                var relativePath = Path.Combine(current.RelativePath, folder.Name);
+                var valid = true;
+                try
+                {
+                    BackupFile.GetDestinationPath(config.DestinationPath, relativePath);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    valid = false;
+                    RecordError(folder.FullName, ex);
+                }
+                if (valid)
+                {
+                    DiscoveredFolderCount++;
+                    yield return new SourceFolder(folder, relativePath);
                 }
             }
-            catch (Exception e)
+            if (current.RelativePath.Length == 0)
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                ConsoleUtils.WriteError("\n" + e.Message);
+                ConsoleUtils.WriteLine($"Discovered {DiscoveredFolderCount - 1} source subfolders; all are queued for scanning.");
             }
-            /*if (errorFiles.Length > 0)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"\nFiles copied with error. Copied {totalFiles} files in {folderCount} folders");
-
-                Console.WriteLine($"Could not copy {errorFileCount} files:");
-                Console.WriteLine(errorFiles.ToString());
-            }
-            else
-            {
-                Console.ForegroundColor = ConsoleColor.Blue;
-                Console.WriteLine($"\nFiles copied successfully: {totalFiles} files in {folderCount} folders");
-            }*/
-            Console.ResetColor();
-            stopWatch.Stop();
-
         }
 
-        public void CopySequentially2()
+        void ReadFiles(SourceFolder current)
         {
-            if (Device == null) return;
-
-            ConsoleUtils.WriteLine("\nPhase 1: Analyzing Source and Destination...");
-            stopWatch.Restart();
-
-            // 1. Analyze Source
-            Console.WriteLine("Reading iPhone metadata...");
-            var sourceFiles = new List<(MediaFileInfo Info, string RelativePath)>();
-            
-            // Try to find the DCIM folder or Root dynamically using Drives (to match legacy behavior)
-            MediaDirectoryInfo sourceDir = null;
-            try 
-            {
-                 // Priority: Match legacy CopySequentially logic
-                 // Legacy: var drive = drives.FirstOrDefault(d => d.Name == "\\Internal Storage");
-                 
-                 var drives = Device.GetDrives();
-                 var rootDrive = drives.FirstOrDefault(d => d.Name.Equals("\\Internal Storage", StringComparison.OrdinalIgnoreCase));
-                 
-                 if (rootDrive != null)
-                 {
-                     sourceDir = rootDrive.RootDirectory;
-                     // Check if DCIM exists inside and if the user wants that instead
-                     // But legacy just took RootDirectory. Let's start with Root.
-                     
-                     // If configured path is explicitly NOT Internal Storage, we might want to respect it,
-                     // but currently appsettings is \Internal Storage.
-                     ConsoleUtils.WriteSuccess($"Accessed drive: {rootDrive.Name}");
-                 }
-                 else
-                 {
-                     // Fallback to config path
-                     sourceDir = Device.GetDirectoryInfo(_config.SourcePath);
-                 }
-            }
-            catch(Exception ex)
-            {
-                ConsoleUtils.WriteError($"Error finding source directory: {ex.Message}");
-            }
-
-            if (sourceDir == null)
-            {
-                ConsoleUtils.WriteError($"Could not find DCIM folder. Please check connection and unlock phone.");
-                Console.WriteLine("Available Drives/Folders:");
-                try 
-                {
-                    var drives = Device.GetDrives();
-                    foreach (var d in drives)
-                    {
-                        Console.WriteLine($" - Drive: {d.Name}");
-                        if (d.RootDirectory != null)
-                        {
-                            foreach(var dir in d.RootDirectory.EnumerateDirectories())
-                            {
-                                 Console.WriteLine($"   - {dir.Name}");
-                            }
-                        }
-                    }
-                }
-                catch {}
-                return;
-            }
-
-            var sourceFolders = sourceDir.EnumerateDirectories().ToList();
-            int totalFolderCount = sourceFolders.Count;
-            Console.WriteLine($"Found {totalFolderCount} folders.");
-
-            int totalSourceFilesFound = 0;
-            int currentFolderIndex = 0;
-            
-            // Parallel Scanning
-            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _config.ThreadCount };
-            var cancellationTokenSource = new CancellationTokenSource();
-            parallelOptions.CancellationToken = cancellationTokenSource.Token;
-            
-            // Use ConcurrentBag for thread safety during parallel execution
-            var tempSourceFiles = new ConcurrentBag<(MediaFileInfo Info, string RelativePath)>();
-
-            Console.WriteLine($"Scanning with {_config.ThreadCount} threads (Press 'Q' to abort)...");
-
-            // Start a background task to monitor for 'Q' key
-            var isScanning = true;
-            Task.Run(() => 
-            {
-                while (isScanning && !cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    if (Console.KeyAvailable)
-                    {
-                        var key = Console.ReadKey(true);
-                        if (key.Key == ConsoleKey.Q)
-                        {
-                            ConsoleUtils.WriteWarning("\n\n'Q' pressed. Aborting analysis...");
-                            cancellationTokenSource.Cancel();
-                            break;
-                        }
-                    }
-                    Thread.Sleep(200); // Check 5 times a second
-                }
-            });
-
+            var folderFiles = 0;
             try
             {
-                Parallel.ForEach(sourceFolders, parallelOptions, (folder) =>
+                foreach (var file in current.Files)
                 {
-                    if (cancellationTokenSource.Token.IsCancellationRequested) return;
-
-                    // Thread-safe update of folder index for progress (approximate is fine)
-                    int myFolderIndex = Interlocked.Increment(ref currentFolderIndex);
-
+                    CheckCancellation(cancellationToken);
                     try
                     {
-
-
-                        // NOTE: Device concurrency depends on the library/driver support.
-                        var files = folder.EnumerateFiles();
-                        foreach (var file in files)
-                        {
-                            if (cancellationTokenSource.Token.IsCancellationRequested) return;
-
-                            var relativePath = Path.Combine(folder.Name, file.Name);
-                            tempSourceFiles.Add((file, relativePath));
-                            int currentCount = Interlocked.Increment(ref totalSourceFilesFound);
-                            
-                            if (currentCount % 50 == 0) 
-                            {
-                                Console.Write($"\rScanning folder {myFolderIndex}/{totalFolderCount} ({folder.Name}) » Found {currentCount} files...     ");
-                            }
-                        }
+                        var relativePath = Path.Combine(current.RelativePath, file.Name);
+                        files.Add(new SourceFile(file.Id, file.PersistentUniqueId, file.FullName, relativePath,
+                            BackupFile.GetDestinationPath(config.DestinationPath, relativePath),
+                            file.Length, file.CreationTime, file.LastWriteTime, file.CopyTo));
+                        FoundFiles++;
+                        folderFiles++;
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        if (!(ex is OperationCanceledException))
-                           ConsoleUtils.WriteWarning($"\nError reading folder {folder.Name}: {ex.Message}");
+                        RecordError(file.FullName, ex);
                     }
-                });
-            }
-            catch (OperationCanceledException)
-            {
-                Console.WriteLine("\nAnalysis canceled.");
-                return;
+                }
             }
             finally
             {
-                isScanning = false;
+                current.Files.Clear();
             }
-            
-            // Add collected files to main list
-            sourceFiles.AddRange(tempSourceFiles);
-
-            Console.WriteLine($"\rFound {totalSourceFilesFound} files on iPhone.          ");
-
-            // 2. Analyze Destination
-            Console.WriteLine("Reading Destination metadata...");
-            var destFilesMap = new Dictionary<string, FileInfo>(StringComparer.OrdinalIgnoreCase);
-            
-            if (Directory.Exists(_config.DestinationPath))
-            {
-                var destDirInfo = new DirectoryInfo(_config.DestinationPath);
-                // Get all files recursively
-                var allDestFiles = destDirInfo.GetFiles("*.*", SearchOption.AllDirectories);
-                
-                foreach (var dFile in allDestFiles)
-                {
-                    // Calculate relative path from CopyToBasePath
-                    // dFile.FullName: E:\Photos\DCIM\100APPLE\IMG_1234.JPG
-                    // Base: E:\Photos\DCIM\
-                    // Relative: 100APPLE\IMG_1234.JPG
-                    
-                    var relative = Path.GetRelativePath(_config.DestinationPath, dFile.FullName);
-                    if (!destFilesMap.ContainsKey(relative))
-                    {
-                        destFilesMap[relative] = dFile;
-                    }
-                }
-            }
-            Console.WriteLine($"Found {destFilesMap.Count} files in Destination.");
-
-            // 3. Phase 2: Diff
-            ConsoleUtils.WriteLine("\nPhase 2: Calculating Differences...");
-            var filesToCopy = new List<(MediaFileInfo Info, string RelativePath)>();
-            
-            foreach (var source in sourceFiles)
-            {
-                if (destFilesMap.TryGetValue(source.RelativePath, out var destFile))
-                {
-                    // File exists, check if we need to copy (Size or Date)
-                    // Note: MTP LastWriteTime might differ slightly? Using size as primary check or exact match?
-                    
-                    bool sizeMatch = (ulong)destFile.Length == source.Info.Length;
-                    // Comparison tolerance for time?
-                    // Let's use the ToCopy logic inline or simplified
-                    
-                    bool timeMatch = destFile.LastWriteTime == source.Info.LastWriteTime;
-
-                    if (!sizeMatch || !timeMatch)
-                    {
-                         // If size or time differs, we copy (overwrite)
-                         // Actually, strictly speaking if size matches we might skip to save time if timestamps are flaky
-                         // But reusing existing ToCopy logic principle:
-                         // if (fileInfo.LastWriteTime != mediaFileInfo.LastWriteTime) returns true
-                         // if ((ulong)fileInfo.Length != mediaFileInfo.Length) returns true
-                         
-                         filesToCopy.Add(source);
-                    }
-                }
-                else
-                {
-                    // New file
-                    filesToCopy.Add(source);
-                }
-            }
-
-            ConsoleUtils.WriteLine($"Phase 3: Copying {filesToCopy.Count} files...");
-            
-            // 4. Phase 3: Copy
-            int currentCount = 0;
-            int totalToCopy = filesToCopy.Count;
-            int skipped = 0;
-            int errorsCount = 0;
-            ulong processedBytes = 0;
-            ulong totalBytesToCopy = 0;
-            filesToCopy.ForEach(f => totalBytesToCopy += f.Info.Length);
-
-            foreach (var item in filesToCopy)
-            {
-                 // Graceful Exit Check
-                 if (Console.KeyAvailable)
-                 {
-                     var key = Console.ReadKey(true);
-                     if (key.Key == ConsoleKey.Q)
-                     {
-                         ConsoleUtils.WriteWarning("\n\n'Q' pressed. Stopping gracefully...");
-                         break;
-                     }
-                 }
-
-                 currentCount++;
-                 var sourceFile = item.Info;
-                 var relativePath = item.RelativePath;
-                 var destFilePath = Path.Combine(_config.DestinationPath, relativePath);
-                 var destFolder = Path.GetDirectoryName(destFilePath);
-
-                 try
-                 {
-                     if (destFolder != null && !Directory.Exists(destFolder))
-                     {
-                         Directory.CreateDirectory(destFolder);
-                     }
-
-                     Device.DownloadFile(sourceFile.FullName, destFilePath);
-                     
-                     // Set timestamps
-                     File.SetCreationTime(destFilePath, (DateTime)sourceFile.CreationTime);
-                     File.SetLastWriteTime(destFilePath, (DateTime)sourceFile.LastWriteTime);
-
-                     processedBytes += sourceFile.Length;
-                     
-                     // Progress logging
-                     ConsoleUtils.ClearLine();
-                     ConsoleUtils.Write($"\r{elapsedTimeString} {ConsoleUtils.CYAN}{processedBytes.ToSize()} / {totalBytesToCopy.ToSize()} » ({currentCount}/{totalToCopy}) » {relativePath}");
-                 }
-                 catch (Exception ex)
-                 {
-                     errorsCount++;
-                     Errors.Add((sourceFile.FullName, ex.Message));
-                     ConsoleUtils.WriteError($"\nError copying {relativePath}: {ex.Message}");
-                 }
-            }
-
-            stopWatch.Stop();
-            ConsoleUtils.WriteLine("\n\nFinished.");
-            ConsoleUtils.WriteLine($"Copied: {currentCount - errorsCount - skipped}");
-            ConsoleUtils.WriteLine($"Errors: {errorsCount}");
+            ConsoleUtils.WriteLine($"  Read {folderFiles} files. Folders visited: {FolderCount}/{DiscoveredFolderCount}.");
         }
+    }
+
+    private void RecordError(string path, Exception exception)
+    {
+        var message = $"{exception.Message} (0x{exception.HResult:X8})";
+        Errors.Add((path, message));
+        ConsoleUtils.WriteError($"{path}: {message}");
+    }
+
+    private static void CheckCancellation(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ConsoleUtils.IsQuitRequested())
+        {
+            throw new OperationCanceledException("Stopped by user.");
+        }
+    }
+
+    public void PrintSummary()
+    {
+        Console.WriteLine($"\nFolders visited: {FolderCount}/{DiscoveredFolderCount} (including source root); files found: {FoundFiles}; copied: {CopiedFiles} ({CopiedBytes.ToSize()}); skipped: {SkippedFiles}; excluded: {ExcludedFiles}; errors: {Errors.Count}.");
+    }
+
+    private MediaDevice RequireDevice()
+    {
+        return device is { IsConnected: true }
+            ? device
+            : throw new InvalidOperationException("Connect to iPhone before accessing photos.");
+    }
+
+    public void Dispose()
+    {
+        if (device == null) return;
+        try
+        {
+            if (device.IsConnected) device.Disconnect();
+        }
+        finally
+        {
+            device.Dispose();
+            device = null;
+        }
+    }
+
+    private sealed record SourceFolder(MediaDirectoryInfo Directory, string RelativePath)
+    {
+        public List<MediaFileInfo> Files { get; } = [];
     }
 }

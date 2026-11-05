@@ -1,60 +1,106 @@
-﻿using MediaDevices;
-using System.IO;
-using System.Text;
+using MediaDevices;
 using Microsoft.Extensions.Configuration;
 
-namespace FileCopier
+namespace FileCopier;
+
+internal class Program
 {
-    internal class Program
+    private static int Main(string[] args)
     {
-        static void Main(string[] args)
+        CommandLineOptions options;
+        try
         {
-            var builder = new ConfigurationBuilder()
-                .SetBasePath(Directory.GetCurrentDirectory())
-                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
-
-            IConfiguration config = builder.Build();
-            var appConfig = config.Get<AppConfig>();
-
-            Console.WriteLine("iPhone Photo Copier, Calibre Technologies");
-            
-            var iPhone = new iPhoneConnect(appConfig);
-            if (iPhone.Connect())
-            {
-                try
-                {
-                    Console.WriteLine($"Phone: {iPhone.Device.FriendlyName}");
-                    Console.WriteLine($"Source Path: {appConfig.SourcePath}");
-                    Console.WriteLine($"Destination Path: {appConfig.DestinationPath}");
-                    iPhone.CopySequentially2();
-                }
-                finally
-                {
-                    iPhone.Disconnect();
-                }
-                if (iPhone.Errors.Count > 0)
-                {
-                    
-                    ConsoleUtils.WriteError($"\nFiles copied with error. Copied {iPhone.TotalFiles} files in {iPhone.FolderCount} folders");
-                    ConsoleUtils.WriteWarning($"Could not copy {iPhone.Errors.Count} files:");
-                    iPhone.Errors.ForEach(x => ConsoleUtils.WriteWarning(x.FileName));
-                    
-                }
-                else
-                {
-
-                    ConsoleUtils.WriteSuccess($"\nFiles copied successfully: {iPhone.TotalFiles} files in {iPhone.FolderCount} folders");
-                }
-            }
-            else 
-            {
-                 ConsoleUtils.WriteError("Could not connect to iPhone.");
-            }
-
-            Console.WriteLine("Done");
+            options = CommandLineOptions.Parse(args);
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine($"{ex.Message} Use --help for usage.");
+            return 1;
         }
 
+        if (options.Mode == CommandLineMode.Help)
+        {
+            Console.WriteLine("iPhonePhotoCopier [--exclude-file <relative-path>]...");
+            Console.WriteLine("iPhonePhotoCopier --diagnose | --scan-only | --help");
+            Console.WriteLine("Configure SourcePath and DestinationPath in appsettings.json beside the executable.");
+            Console.WriteLine("--diagnose checks photo-folder access without downloading photos.");
+            Console.WriteLine("--scan-only scans every source folder and file without downloading photos.");
+            Console.WriteLine("--exclude-file skips one phone file relative to SourcePath; repeat for more files.");
+            Console.WriteLine("Exclusions apply only while copying. Excluded files keep the backup incomplete.");
+            return 0;
+        }
 
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler onCancel = (_, e) =>
+        {
+            e.Cancel = true;
+            cancellation.Cancel();
+        };
+        Console.CancelKeyPress += onCancel;
+
+        try
+        {
+            // Explorer, shortcuts, and other working directories must use the same settings.
+            using var configuration = new ConfigurationManager();
+            configuration.SetBasePath(AppContext.BaseDirectory)
+                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false);
+            var config = configuration.Get<AppConfig>() ?? new AppConfig();
+            config.Validate();
+
+            Console.WriteLine("iPhone Photo Copier, Calibre Technologies");
+            // The COM worker belongs to the process. Close the phone first, then the manager.
+            using var deviceManager = MediaDeviceManager.Instance;
+            using var phone = new iPhoneConnect(config);
+            phone.Connect();
+            if (options.Mode == CommandLineMode.Diagnose)
+            {
+                phone.Diagnose();
+                ConsoleUtils.WriteSuccess("Diagnosis completed. No photos downloaded.");
+                return 0;
+            }
+
+            Console.WriteLine($"Phone: {phone.PhoneName}");
+            Console.WriteLine($"Source Path: {config.SourcePath}");
+            Console.WriteLine($"Destination Path: {config.DestinationPath}");
+            var scanOnly = options.Mode == CommandLineMode.ScanOnly;
+            if (scanOnly) Console.WriteLine("Scan only: no photos will be downloaded.");
+            try
+            {
+                phone.CopyPhotos(cancellation.Token, scanOnly, options.ExcludedFiles);
+            }
+            finally
+            {
+                phone.PrintSummary();
+            }
+
+            if (phone.Errors.Count > 0)
+            {
+                ConsoleUtils.WriteError(scanOnly
+                    ? "Source scan incomplete. Resolve the errors above and rerun. No photos downloaded."
+                    : "Backup incomplete. Review the errors and any excluded files above before rerunning.");
+                return 1;
+            }
+            ConsoleUtils.WriteSuccess(scanOnly ? "Source scan completed. No photos downloaded." : "Backup completed.");
+            return 0;
+        }
+        catch (OperationCanceledException)
+        {
+            ConsoleUtils.WriteWarning("Stopped. Backup is incomplete; rerun to continue.");
+            return 2;
+        }
+        catch (Exception ex)
+        {
+            ConsoleUtils.WriteError($"Backup failed: {ex.Message} (0x{ex.HResult:X8})");
+            if (ex.HResult == unchecked((int)0x80042008))
+            {
+                ConsoleUtils.WriteWarning("iPhone returned an invalid storage ID. Reconnect the unlocked phone, allow access, then retry --diagnose.");
+            }
+            return 1;
+        }
+        finally
+        {
+            Console.CancelKeyPress -= onCancel;
+            ConsoleUtils.Reset();
+        }
     }
-
 }

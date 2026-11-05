@@ -26,12 +26,59 @@ namespace FileCopier
 
         public static void ClearLine()
         {
-            Console.Write("\r" + new string(' ', Console.WindowWidth) + "\r");
+            if (Console.IsOutputRedirected) return;
+            try
+            {
+                Console.Write("\r" + new string(' ', Math.Max(0, Console.WindowWidth - 1)) + "\r");
+            }
+            catch (IOException)
+            {
+                // A detached console cannot provide its window width.
+            }
         }
         public static void Reset() 
         {
-            Console.CursorVisible = true;
-            Console.ResetColor();
+            if (Console.IsOutputRedirected) return;
+            try
+            {
+                Console.CursorVisible = true;
+                Console.ResetColor();
+            }
+            catch (IOException)
+            {
+                // Console presentation must not affect transfer results.
+            }
+        }
+
+        public static bool IsQuitRequested()
+        {
+            if (Console.IsInputRedirected) return false;
+            try
+            {
+                return Console.KeyAvailable && Console.ReadKey(intercept: true).Key == ConsoleKey.Q;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        private static void SetAppearance(ConsoleColor color)
+        {
+            if (Console.IsOutputRedirected) return;
+            try
+            {
+                Console.CursorVisible = false;
+                Console.ForegroundColor = color;
+            }
+            catch (IOException)
+            {
+                // Console presentation must not affect transfer results.
+            }
         }
 
         public static void WriteError(string message)
@@ -51,15 +98,13 @@ namespace FileCopier
 
         public static void WriteLine(string message, ConsoleColor color = ConsoleColor.Yellow) 
         {
-            Console.CursorVisible = false;
-            Console.ForegroundColor = color;
+            SetAppearance(color);
             Console.WriteLine(message);
         }
 
         public static void Write(string message, ConsoleColor color = ConsoleColor.Yellow) 
         {
-            Console.CursorVisible = false;
-            Console.ForegroundColor = color;
+            SetAppearance(color);
             Console.Write(message);
         }
 
