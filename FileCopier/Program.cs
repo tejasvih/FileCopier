@@ -1,3 +1,4 @@
+using FileCopier.Afc;
 using MediaDevices;
 using Microsoft.Extensions.Configuration;
 
@@ -20,12 +21,16 @@ internal class Program
 
         if (options.Mode == CommandLineMode.Help)
         {
-            Console.WriteLine("iPhonePhotoCopier [--exclude-file <relative-path>]...");
-            Console.WriteLine("iPhonePhotoCopier --diagnose | --scan-only | --help");
-            Console.WriteLine("Configure SourcePath and DestinationPath in appsettings.json beside the executable.");
+            Console.WriteLine("iPhonePhotoCopier [--wpd] [--exclude-file <relative-path>]...");
+            Console.WriteLine("iPhonePhotoCopier [--wpd] --diagnose | --scan-only | --help");
+            Console.WriteLine("Configure appsettings.json beside the executable.");
+            Console.WriteLine("By default photos are read through AFC (Apple Mobile Device Service) from the camera roll /DCIM");
+            Console.WriteLine("  and copied to AfcDestinationPath.");
+            Console.WriteLine("--wpd reads SourcePath through Windows Portable Devices instead (the Explorer view)");
+            Console.WriteLine("  and copies to DestinationPath.");
             Console.WriteLine("--diagnose checks photo-folder access without downloading photos.");
             Console.WriteLine("--scan-only scans every source folder and file without downloading photos.");
-            Console.WriteLine("--exclude-file skips one phone file relative to SourcePath; repeat for more files.");
+            Console.WriteLine("--exclude-file skips one phone file relative to the source (/DCIM, or SourcePath with --wpd); repeat for more files.");
             Console.WriteLine("Exclusions apply only while copying. Excluded files keep the backup incomplete.");
             return 0;
         }
@@ -49,8 +54,8 @@ internal class Program
 
             Console.WriteLine("iPhone Photo Copier, Calibre Technologies");
             // The COM worker belongs to the process. Close the phone first, then the manager.
-            using var deviceManager = MediaDeviceManager.Instance;
-            using var phone = new iPhoneConnect(config);
+            using var deviceManager = options.UseWpd ? MediaDeviceManager.Instance : null;
+            using IPhoneSource phone = options.UseWpd ? new WpdSource(config.SourcePath) : new AfcSource();
             phone.Connect();
             if (options.Mode == CommandLineMode.Diagnose)
             {
@@ -60,20 +65,22 @@ internal class Program
             }
 
             Console.WriteLine($"Phone: {phone.PhoneName}");
-            Console.WriteLine($"Source Path: {config.SourcePath}");
-            Console.WriteLine($"Destination Path: {config.DestinationPath}");
+            Console.WriteLine($"Source Path: {phone.SourcePath} ({(options.UseWpd ? "WPD" : "AFC")})");
+            var destinationPath = config.GetDestinationPath(options.UseWpd);
+            Console.WriteLine($"Destination Path: {destinationPath}");
             var scanOnly = options.Mode == CommandLineMode.ScanOnly;
             if (scanOnly) Console.WriteLine("Scan only: no photos will be downloaded.");
+            var backup = new PhoneBackup(config, phone, destinationPath);
             try
             {
-                phone.CopyPhotos(cancellation.Token, scanOnly, options.ExcludedFiles);
+                backup.CopyPhotos(cancellation.Token, scanOnly, options.ExcludedFiles);
             }
             finally
             {
-                phone.PrintSummary();
+                backup.PrintSummary();
             }
 
-            if (phone.Errors.Count > 0)
+            if (backup.Errors.Count > 0)
             {
                 ConsoleUtils.WriteError(scanOnly
                     ? "Source scan incomplete. Resolve the errors above and rerun. No photos downloaded."

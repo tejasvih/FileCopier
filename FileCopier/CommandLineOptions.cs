@@ -8,7 +8,7 @@ internal enum CommandLineMode
     Help
 }
 
-internal sealed record CommandLineOptions(CommandLineMode Mode, IReadOnlySet<string> ExcludedFiles)
+internal sealed record CommandLineOptions(CommandLineMode Mode, IReadOnlySet<string> ExcludedFiles, bool UseWpd = false)
 {
     public static CommandLineOptions Parse(string[] args)
     {
@@ -16,6 +16,7 @@ internal sealed record CommandLineOptions(CommandLineMode Mode, IReadOnlySet<str
         var mode = CommandLineMode.Copy;
         var explicitMode = false;
         var exclusions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var useWpd = false;
 
         for (var index = 0; index < args.Length; index++)
         {
@@ -28,6 +29,12 @@ internal sealed record CommandLineOptions(CommandLineMode Mode, IReadOnlySet<str
                 }
 
                 exclusions.Add(NormalizeExcludedPath(args[index]));
+                continue;
+            }
+
+            if (args[index] == "--wpd")
+            {
+                useWpd = true;
                 continue;
             }
 
@@ -48,7 +55,7 @@ internal sealed record CommandLineOptions(CommandLineMode Mode, IReadOnlySet<str
         if (mode != CommandLineMode.Copy && exclusions.Count > 0)
             throw new ArgumentException("--exclude-file applies only to copying; it cannot be combined with --diagnose, --scan-only, or --help.");
 
-        return new CommandLineOptions(mode, exclusions);
+        return new CommandLineOptions(mode, exclusions, useWpd);
     }
 
     private static string NormalizeExcludedPath(string relativePath)

@@ -12,6 +12,17 @@ public sealed class CommandLineOptionsTests
 
         Assert.Equal(CommandLineMode.Copy, options.Mode);
         Assert.Empty(options.ExcludedFiles);
+        Assert.False(options.UseWpd);
+    }
+
+    [Theory]
+    [InlineData("--wpd")]
+    [InlineData("--wpd", "--scan-only")]
+    [InlineData("--diagnose", "--wpd")]
+    [InlineData("--wpd", "--exclude-file", @"202409_a\IMG_E7443.MOV")]
+    public void WpdFlagCombinesWithAnyMode(params string[] args)
+    {
+        Assert.True(CommandLineOptions.Parse(args).UseWpd);
     }
 
     [Theory]

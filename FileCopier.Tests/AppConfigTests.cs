@@ -55,6 +55,41 @@ public sealed class AppConfigTests
         Assert.Throws<ArgumentException>(config.Validate);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("Photos")]
+    [InlineData(@"\Photos")]
+    public void RejectsAfcDestinationThatDependsOnWorkingDirectory(string destination)
+    {
+        var config = new AppConfig { AfcDestinationPath = destination };
+
+        Assert.Throws<ArgumentException>(config.Validate);
+    }
+
+    [Fact]
+    public void EachTransportHasItsOwnDestination()
+    {
+        var config = new AppConfig
+        {
+            DestinationPath = Path.Combine(Path.GetTempPath(), "Photos", "DCIM"),
+            AfcDestinationPath = Path.Combine(Path.GetTempPath(), "Photos", "x", "..", "AFC"),
+        };
+
+        config.Validate();
+
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "Photos", "DCIM"), config.GetDestinationPath(useWpd: true));
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "Photos", "AFC"), config.GetDestinationPath(useWpd: false));
+    }
+
+    [Fact]
+    public void TransportsCannotShareADestination()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "Photos");
+        var config = new AppConfig { DestinationPath = folder, AfcDestinationPath = folder + Path.DirectorySeparatorChar };
+
+        Assert.Throws<ArgumentException>(config.Validate);
+    }
+
     [Fact]
     public void ExpectedFileCountIsDisabledByDefault()
     {
