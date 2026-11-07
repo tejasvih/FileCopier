@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test PhotoCopier.sln --configuration Release
+
+  # Pushing a version tag such as v1.0.0 publishes a ready-to-run zip as a GitHub Release.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish and release
+        shell: pwsh
+        run: |
+          $version = $env:TAG.Substring(1)
+          $zip = "PhotoCopier-$version-win-x64.zip"
+          dotnet publish FileCopier/PhotoCopier.csproj --configuration Release --runtime win-x64 --self-contained `
+            -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none `
+            -p:Version=$version --output out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item LICENSE, THIRD-PARTY-NOTICES.md, README.md out
+          Compress-Archive -Path out/* -DestinationPath $zip
+          gh release create $env:TAG $zip --title "Photo Copier for iPhone $env:TAG" --generate-notes

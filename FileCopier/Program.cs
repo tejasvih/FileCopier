@@ -40,11 +40,13 @@ internal class Program
             // Explorer, shortcuts, and other working directories must use the same settings.
             using var configuration = new ConfigurationManager();
             configuration.SetBasePath(AppContext.BaseDirectory)
-                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false);
+                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+                // Personal settings that stay out of source control override the shipped defaults.
+                .AddJsonFile("appsettings.local.json", optional: true, reloadOnChange: false);
             var config = configuration.Get<AppConfig>() ?? new AppConfig();
             config.Validate();
 
-            Console.WriteLine("iPhone Photo Copier, Calibre Technologies");
+            Console.WriteLine("Photo Copier for iPhone");
             if (showMenu)
             {
                 var chosen = StartMenu.Show(config, Console.In, Console.Out);
@@ -56,6 +58,9 @@ internal class Program
                 }
                 options = chosen;
             }
+
+            // Report a missing backup folder before touching the phone. Diagnosis copies nothing.
+            var destinationPath = options.Mode == CommandLineMode.Diagnose ? "" : config.GetDestinationPath(options.UseWpd);
 
             // The COM worker belongs to the process. Close the phone first, then the manager.
             using var deviceManager = options.UseWpd ? MediaDeviceManager.Instance : null;
@@ -70,7 +75,6 @@ internal class Program
 
             Console.WriteLine($"Phone: {phone.PhoneName}");
             Console.WriteLine($"Source Path: {phone.SourcePath} ({(options.UseWpd ? "WPD" : "AFC")})");
-            var destinationPath = config.GetDestinationPath(options.UseWpd);
             Console.WriteLine($"Destination Path: {destinationPath}");
             var scanOnly = options.Mode == CommandLineMode.ScanOnly;
             if (scanOnly) Console.WriteLine("Scan only: no photos will be downloaded.");
@@ -123,11 +127,11 @@ internal class Program
 
     private static void PrintHelp()
     {
-        Console.WriteLine("iPhonePhotoCopier                 (no parameters: choose an action from a menu)");
-        Console.WriteLine("iPhonePhotoCopier [--wpd] [--copy] [--exclude-file <relative-path>]...");
-        Console.WriteLine("iPhonePhotoCopier [--wpd] --diagnose | --scan-only");
-        Console.WriteLine("iPhonePhotoCopier --help | -h | /?");
-        Console.WriteLine("Configure appsettings.json beside the executable.");
+        Console.WriteLine("PhotoCopier                 (no parameters: choose an action from a menu)");
+        Console.WriteLine("PhotoCopier [--wpd] [--copy] [--exclude-file <relative-path>]...");
+        Console.WriteLine("PhotoCopier [--wpd] --diagnose | --scan-only");
+        Console.WriteLine("PhotoCopier --help | -h | /?");
+        Console.WriteLine("Configure appsettings.json beside the executable (set AfcDestinationPath before copying).");
         Console.WriteLine("By default photos are read through AFC (Apple Mobile Device Service) from the camera roll /DCIM");
         Console.WriteLine("  and copied to AfcDestinationPath.");
         Console.WriteLine("--wpd reads SourcePath through Windows Portable Devices instead (the Explorer view)");

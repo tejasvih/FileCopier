@@ -217,3 +217,7 @@ orleans.codegen.cs
 
 # Inclusion generated files
 _Inclusion/
+
+# Personal settings and local build output
+appsettings.local.json
+build_*.txt

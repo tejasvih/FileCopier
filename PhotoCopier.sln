@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.33414.496
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "iPhonePhotoCopier", "FileCopier\iPhonePhotoCopier.csproj", "{5C044DAE-F70F-4132-9C7B-FF318668C9F9}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PhotoCopier", "FileCopier\PhotoCopier.csproj", "{5C044DAE-F70F-4132-9C7B-FF318668C9F9}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileCopier.Tests", "FileCopier.Tests\FileCopier.Tests.csproj", "{D572BCBE-C155-4BC3-B1E9-B30CF2FA1884}"
 EndProject

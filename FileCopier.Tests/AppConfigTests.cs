@@ -43,8 +43,6 @@ public sealed class AppConfigTests
     }
 
     [Theory]
-    [InlineData("")]
-    [InlineData(" ")]
     [InlineData("Photos")]
     [InlineData("C:Photos")]
     [InlineData(@"\Photos")]
@@ -56,7 +54,6 @@ public sealed class AppConfigTests
     }
 
     [Theory]
-    [InlineData("")]
     [InlineData("Photos")]
     [InlineData(@"\Photos")]
     public void RejectsAfcDestinationThatDependsOnWorkingDirectory(string destination)
@@ -64,6 +61,33 @@ public sealed class AppConfigTests
         var config = new AppConfig { AfcDestinationPath = destination };
 
         Assert.Throws<ArgumentException>(config.Validate);
+    }
+
+    [Fact]
+    public void NoBackupFolderIsConfiguredByDefault()
+    {
+        var config = new AppConfig();
+
+        config.Validate();
+
+        Assert.Throws<ArgumentException>(() => config.GetDestinationPath(useWpd: false));
+        Assert.Throws<ArgumentException>(() => config.GetDestinationPath(useWpd: true));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData(null)]
+    public void UnsetDestinationIsReportedOnlyWhenItsTransportIsUsed(string? unset)
+    {
+        var afcFolder = Path.Combine(Path.GetTempPath(), "Photos", "AFC");
+        var config = new AppConfig { AfcDestinationPath = afcFolder, DestinationPath = unset! };
+
+        config.Validate();
+
+        Assert.Equal(afcFolder, config.GetDestinationPath(useWpd: false));
+        var error = Assert.Throws<ArgumentException>(() => config.GetDestinationPath(useWpd: true));
+        Assert.Contains("Set DestinationPath in appsettings.json", error.Message);
     }
 
     [Fact]

@@ -3,10 +3,10 @@ namespace FileCopier
     public class AppConfig
     {
         public string SourcePath { get; set; } = @"\Internal Storage";
-        /// <summary>Backup folder for the WPD transport (--wpd), which mirrors SourcePath.</summary>
-        public string DestinationPath { get; set; } = @"E:\Photos\DCIM\";
-        /// <summary>Backup folder for the AFC transport (default), which mirrors the camera roll's 1xxAPPLE folders.</summary>
-        public string AfcDestinationPath { get; set; } = @"E:\Photos\AFC\";
+        /// <summary>Backup folder for the WPD transport (--wpd), which mirrors SourcePath. Empty until configured.</summary>
+        public string DestinationPath { get; set; } = "";
+        /// <summary>Backup folder for the AFC transport (default), which mirrors the camera roll's 1xxAPPLE folders. Empty until configured.</summary>
+        public string AfcDestinationPath { get; set; } = "";
         public int MinimumExpectedFiles { get; set; }
 
         public void Validate()
@@ -27,16 +27,24 @@ namespace FileCopier
             DestinationPath = ValidateDestination(DestinationPath, nameof(DestinationPath));
             AfcDestinationPath = ValidateDestination(AfcDestinationPath, nameof(AfcDestinationPath));
             // The layouts differ; sharing a folder would mix WPD month folders with AFC 1xxAPPLE folders.
-            if (string.Equals(Path.TrimEndingDirectorySeparator(DestinationPath),
+            if (DestinationPath != "" && string.Equals(Path.TrimEndingDirectorySeparator(DestinationPath),
                     Path.TrimEndingDirectorySeparator(AfcDestinationPath), StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("DestinationPath and AfcDestinationPath must be different folders.");
         }
 
-        public string GetDestinationPath(bool useWpd) => useWpd ? DestinationPath : AfcDestinationPath;
-
-        private static string ValidateDestination(string path, string name)
+        /// <summary>Returns the selected transport's backup folder; an unset folder is reported here, when it is needed.</summary>
+        public string GetDestinationPath(bool useWpd)
         {
-            if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+            var (path, name) = useWpd ? (DestinationPath, nameof(DestinationPath)) : (AfcDestinationPath, nameof(AfcDestinationPath));
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException($"Set {name} in appsettings.json beside the executable to the folder that should receive the backup.");
+            return path;
+        }
+
+        private static string ValidateDestination(string? path, string name)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return "";
+            if (!Path.IsPathFullyQualified(path))
                 throw new ArgumentException($"{name} must be an absolute local or UNC folder path.");
             return Path.GetFullPath(path);
         }

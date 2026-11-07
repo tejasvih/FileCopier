@@ -1,10 +1,14 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows7.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Product>Photo Copier for iPhone</Product>
+    <Description>Copies the photos and videos on an iPhone to a Windows folder over USB.</Description>
+    <Authors>Tejasvi Hegde</Authors>
+    <Copyright>Copyright (c) 2026 Tejasvi Hegde</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,6 +23,11 @@
   <ItemGroup>
     <None Update="appsettings.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <!-- Personal overrides for local builds; never part of a published release. -->
+    <None Update="appsettings.local.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </None>
   </ItemGroup>
 

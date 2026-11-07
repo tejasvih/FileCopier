@@ -14,7 +14,7 @@ internal sealed class Lockdown : IDisposable
 {
     private const ushort LockdownPort = 62078;
     private const int MaximumMessageLength = 16 * 1024 * 1024;
-    private const string Label = "iPhonePhotoCopier";
+    private const string Label = "PhotoCopier";
 
     private readonly UsbmuxDevice device;
     private readonly Dictionary<string, object> pairRecord;

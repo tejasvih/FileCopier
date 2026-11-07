@@ -62,7 +62,7 @@ internal sealed record CommandLineOptions(CommandLineMode Mode, IReadOnlySet<str
     private static string NormalizeExcludedPath(string relativePath)
     {
         // Only path syntax is checked here. No directory or file is opened or created.
-        var validationRoot = Path.Combine(Path.GetTempPath(), "iPhonePhotoCopier-exclusion-validation");
+        var validationRoot = Path.Combine(Path.GetTempPath(), "PhotoCopier-exclusion-validation");
         try
         {
             var fullPath = BackupFile.GetDestinationPath(validationRoot, relativePath);

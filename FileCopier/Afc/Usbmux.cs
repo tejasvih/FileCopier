@@ -96,8 +96,8 @@ internal static class Usbmux
 
     private static Dictionary<string, object> Request(Stream stream, Dictionary<string, object> message)
     {
-        message["ClientVersionString"] = "iPhonePhotoCopier";
-        message["ProgName"] = "iPhonePhotoCopier";
+        message["ClientVersionString"] = "PhotoCopier";
+        message["ProgName"] = "PhotoCopier";
         message["kLibUSBMuxVersion"] = 3L;
         var body = PropertyList.Serialize(message);
 

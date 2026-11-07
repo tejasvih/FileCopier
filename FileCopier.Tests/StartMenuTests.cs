@@ -65,4 +65,17 @@ public sealed class StartMenuTests
         Assert.Contains($"1. Copy photos to {config.AfcDestinationPath} (AFC", output.ToString());
         Assert.Contains($"4. Copy photos to {config.DestinationPath} (WPD", output.ToString());
     }
+
+    [Fact]
+    public void CopyChoicesNameAnUnsetDestination()
+    {
+        var config = new AppConfig();
+        config.Validate();
+        var output = new StringWriter();
+
+        StartMenu.Show(config, new StringReader("q\n"), output);
+
+        Assert.Contains("1. Copy photos to <AfcDestinationPath not set> (AFC", output.ToString());
+        Assert.Contains("4. Copy photos to <DestinationPath not set> (WPD", output.ToString());
+    }
 }
