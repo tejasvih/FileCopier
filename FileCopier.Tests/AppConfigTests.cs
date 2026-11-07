@@ -87,7 +87,45 @@ public sealed class AppConfigTests
 
         Assert.Equal(afcFolder, config.GetDestinationPath(useWpd: false));
         var error = Assert.Throws<ArgumentException>(() => config.GetDestinationPath(useWpd: true));
-        Assert.Contains("Set DestinationPath in appsettings.json", error.Message);
+        Assert.Contains("set DestinationPath in appsettings.json", error.Message);
+        Assert.Contains("Choose B in the menu", error.Message);
+    }
+
+    [Fact]
+    public void SetDestinationPathChangesOnlyTheSelectedTransport()
+    {
+        var config = new AppConfig { DestinationPath = Path.Combine(Path.GetTempPath(), "Photos", "DCIM") };
+        config.Validate();
+
+        config.SetDestinationPath(useWpd: false, Path.Combine(Path.GetTempPath(), "Photos", "x", "..", "AFC"));
+
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "Photos", "AFC"), config.AfcDestinationPath);
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "Photos", "DCIM"), config.DestinationPath);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("Photos")]
+    [InlineData(@"\Photos")]
+    public void SetDestinationPathRejectsAnInvalidFolderAndKeepsTheOldOne(string folder)
+    {
+        var afc = Path.Combine(Path.GetTempPath(), "Photos", "AFC");
+        var config = new AppConfig { AfcDestinationPath = afc };
+        config.Validate();
+
+        Assert.Throws<ArgumentException>(() => config.SetDestinationPath(useWpd: false, folder));
+        Assert.Equal(afc, config.AfcDestinationPath);
+    }
+
+    [Fact]
+    public void SetDestinationPathRejectsTheOtherTransportsFolder()
+    {
+        var dcim = Path.Combine(Path.GetTempPath(), "Photos", "DCIM");
+        var config = new AppConfig { DestinationPath = dcim };
+        config.Validate();
+
+        Assert.Throws<ArgumentException>(() => config.SetDestinationPath(useWpd: false, dcim));
+        Assert.Equal("", config.AfcDestinationPath);
     }
 
     [Fact]
@@ -112,54 +150,5 @@ public sealed class AppConfigTests
         var config = new AppConfig { DestinationPath = folder, AfcDestinationPath = folder + Path.DirectorySeparatorChar };
 
         Assert.Throws<ArgumentException>(config.Validate);
-    }
-
-    [Fact]
-    public void ExpectedFileCountIsDisabledByDefault()
-    {
-        var config = new AppConfig();
-
-        Assert.Equal(0, config.MinimumExpectedFiles);
-        config.ValidateSourceFileCount(0);
-        config.ValidateSourceFileCount(4930);
-    }
-
-    [Theory]
-    [InlineData(-1)]
-    [InlineData(int.MinValue)]
-    public void RejectsNegativeMinimumExpectedFiles(int minimum)
-    {
-        var config = new AppConfig { MinimumExpectedFiles = minimum };
-
-        var error = Assert.Throws<ArgumentOutOfRangeException>(config.Validate);
-
-        Assert.Equal(nameof(AppConfig.MinimumExpectedFiles), error.ParamName);
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(4930)]
-    [InlineData(64809)]
-    public void RejectsSourceCountBelowConfiguredExpectation(int foundFiles)
-    {
-        var config = new AppConfig { MinimumExpectedFiles = 64810 };
-
-        var error = Assert.Throws<IOException>(() => config.ValidateSourceFileCount(foundFiles));
-
-        Assert.Contains(foundFiles.ToString(), error.Message);
-        Assert.Contains("64810", error.Message);
-        Assert.Contains("No files were copied", error.Message);
-        Assert.Contains("USB visibility", error.Message);
-        Assert.Contains("intentionally changed", error.Message);
-    }
-
-    [Theory]
-    [InlineData(64810)]
-    [InlineData(64811)]
-    public void AcceptsSourceCountAtOrAboveConfiguredExpectation(int foundFiles)
-    {
-        var config = new AppConfig { MinimumExpectedFiles = 64810 };
-
-        config.ValidateSourceFileCount(foundFiles);
     }
 }

@@ -19,6 +19,7 @@ public sealed class CommandLineOptionsTests
     [InlineData("--wpd")]
     [InlineData("--wpd", "--scan-only")]
     [InlineData("--diagnose", "--wpd")]
+    [InlineData("--wpd", "--verify")]
     [InlineData("--wpd", "--exclude-file", @"202409_a\IMG_E7443.MOV")]
     public void WpdFlagCombinesWithAnyMode(params string[] args)
     {
@@ -27,6 +28,7 @@ public sealed class CommandLineOptionsTests
 
     [Theory]
     [InlineData("--copy", "Copy")]
+    [InlineData("--verify", "Verify")]
     [InlineData("--diagnose", "Diagnose")]
     [InlineData("--scan-only", "ScanOnly")]
     [InlineData("--help", "Help")]
@@ -56,6 +58,7 @@ public sealed class CommandLineOptionsTests
     }
 
     [Theory]
+    [InlineData("--verify")]
     [InlineData("--diagnose")]
     [InlineData("--scan-only")]
     [InlineData("--help")]
@@ -65,6 +68,27 @@ public sealed class CommandLineOptionsTests
     {
         Assert.Throws<ArgumentException>(() => CommandLineOptions.Parse([mode, "--exclude-file", @"202409_a\IMG_E7443.MOV"]));
         Assert.Throws<ArgumentException>(() => CommandLineOptions.Parse(["--exclude-file", @"202409_a\IMG_E7443.MOV", mode]));
+    }
+
+    [Theory]
+    [InlineData("--backup-folder", @"E:\Other Backup")]
+    [InlineData("--verify", "--backup-folder", @"E:\Other Backup")]
+    [InlineData("--backup-folder", @"E:\Other Backup", "--scan-only", "--wpd")]
+    public void BackupFolderIsKeptForTheRun(params string[] args)
+    {
+        Assert.Equal(@"E:\Other Backup", CommandLineOptions.Parse(args).BackupFolder);
+    }
+
+    [Theory]
+    [InlineData("--backup-folder")]
+    [InlineData("--backup-folder", "--copy")]
+    [InlineData("--backup-folder", "/?")]
+    [InlineData("--backup-folder", @"E:\A", "--backup-folder", @"E:\B")]
+    [InlineData("--diagnose", "--backup-folder", @"E:\A")]
+    [InlineData("--backup-folder", @"E:\A", "--help")]
+    public void InvalidBackupFolderUseIsRejected(params string[] args)
+    {
+        Assert.Throws<ArgumentException>(() => CommandLineOptions.Parse(args));
     }
 
     [Fact]
@@ -81,6 +105,7 @@ public sealed class CommandLineOptionsTests
     [InlineData("--help", "-h")]
     [InlineData("--copy", "--scan-only")]
     [InlineData("/?", "--copy")]
+    [InlineData("--verify", "--copy")]
     public void DuplicateOrConflictingModesAreRejected(string first, string second)
     {
         Assert.Throws<ArgumentException>(() => CommandLineOptions.Parse([first, second]));

@@ -27,6 +27,12 @@ internal interface IPhoneSource : IDisposable
     /// </summary>
     bool IsolatesFailures { get; }
 
+    /// <summary>
+    /// True when listed sizes come from the phone's file system, so a zero size means the file
+    /// really is empty and there is nothing to back up.
+    /// </summary>
+    bool ReportsExactSizes { get; }
+
     void Connect();
     void Diagnose();
     PhoneFolderEntry OpenRoot();

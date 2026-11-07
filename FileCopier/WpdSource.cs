@@ -14,6 +14,9 @@ internal sealed class WpdSource(string sourcePath) : IPhoneSource
     // Equal-sized files would pass length checks, so a failure must end the run.
     public bool IsolatesFailures => false;
 
+    // WPD can list zero bytes for a file that has content, so an empty listing is an error.
+    public bool ReportsExactSizes => false;
+
     public void Connect()
     {
         var devices = MediaDeviceManager.Instance.GetDevices()?.ToList() ?? [];

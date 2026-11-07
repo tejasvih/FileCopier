@@ -208,5 +208,86 @@ public sealed class BackupFileTests : IDisposable
         Assert.Empty(Directory.GetFileSystemEntries(root));
     }
 
+    [Fact]
+    public void VerifyAcceptsAnIdenticalBackupSentInChunks()
+    {
+        var destination = Backup("same.MOV", [1, 2, 3, 4, 5]);
+
+        Assert.Null(BackupFile.Verify(destination, 5, stream =>
+        {
+            stream.Write([1, 2]);
+            stream.Write([3, 4, 5]);
+        }));
+        Assert.Equal([1, 2, 3, 4, 5], File.ReadAllBytes(destination));
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(3, 3)]
+    [InlineData(4, 4)]
+    public void VerifyReportsTheFirstDifferentByte(int changedIndex, int expectedOffset)
+    {
+        var destination = Backup("changed.HEIC", [1, 2, 3, 4, 5]);
+        byte[] phone = [1, 2, 3, 4, 5];
+        phone[changedIndex] = 9;
+
+        var difference = BackupFile.Verify(destination, 5, stream => stream.Write(phone));
+
+        Assert.Equal($"Backup copy differs from the iPhone at byte {expectedOffset}. Delete the backup copy, then copy again.", difference);
+        Assert.Equal([1, 2, 3, 4, 5], File.ReadAllBytes(destination));
+    }
+
+    [Fact]
+    public void VerifyReportsMissingOrResizedBackupWithoutReadingThePhone()
+    {
+        var reads = 0;
+        var resized = Backup("short.JPG", [1, 2]);
+
+        Assert.StartsWith("Missing from the backup.", BackupFile.Verify(Path.Combine(root, "missing.JPG"), 3, _ => reads++));
+        Assert.StartsWith("Backup copy has 2 bytes; the iPhone has 3.", BackupFile.Verify(resized, 3, _ => reads++));
+        Assert.Equal(0, reads);
+    }
+
+    [Fact]
+    public void VerifyTreatsAShortPhoneReadAsAFailedTransfer()
+    {
+        var destination = Backup("cut.MOV", [1, 2, 3]);
+
+        Assert.Throws<IOException>(() => BackupFile.Verify(destination, 3, stream => stream.Write([1, 2])));
+    }
+
+    [Fact]
+    public void VerifyRestartsTheComparisonWhenADownloadIsRetried()
+    {
+        var destination = Backup("retry.MOV", [1, 2, 3, 4]);
+
+        // A failed attempt sent a wrong byte, then the source rewound the stream and resent the file.
+        var difference = BackupFile.Verify(destination, 4, stream =>
+        {
+            var start = stream.Position;
+            stream.Write([1, 7]);
+            stream.SetLength(start);
+            stream.Position = start;
+            stream.Write([1, 2, 3, 4]);
+        });
+
+        Assert.Null(difference);
+    }
+
+    [Fact]
+    public void VerifyRejectsAnEmptyPhoneFile()
+    {
+        var destination = Backup("empty.MOV", [1]);
+
+        Assert.Throws<IOException>(() => BackupFile.Verify(destination, 0, _ => { }));
+    }
+
+    private string Backup(string name, byte[] content)
+    {
+        var path = Path.Combine(root, name);
+        File.WriteAllBytes(path, content);
+        return path;
+    }
+
     public void Dispose() => Directory.Delete(root, recursive: true);
 }

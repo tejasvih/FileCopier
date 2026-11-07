@@ -7,13 +7,9 @@ namespace FileCopier
         public string DestinationPath { get; set; } = "";
         /// <summary>Backup folder for the AFC transport (default), which mirrors the camera roll's 1xxAPPLE folders. Empty until configured.</summary>
         public string AfcDestinationPath { get; set; } = "";
-        public int MinimumExpectedFiles { get; set; }
 
         public void Validate()
         {
-            if (MinimumExpectedFiles < 0)
-                throw new ArgumentOutOfRangeException(nameof(MinimumExpectedFiles), "MinimumExpectedFiles must be zero or greater.");
-
             if (string.IsNullOrWhiteSpace(SourcePath))
                 throw new ArgumentException("SourcePath must name an iPhone folder.");
 
@@ -35,10 +31,27 @@ namespace FileCopier
         /// <summary>Returns the selected transport's backup folder; an unset folder is reported here, when it is needed.</summary>
         public string GetDestinationPath(bool useWpd)
         {
-            var (path, name) = useWpd ? (DestinationPath, nameof(DestinationPath)) : (AfcDestinationPath, nameof(AfcDestinationPath));
+            var path = useWpd ? DestinationPath : AfcDestinationPath;
             if (string.IsNullOrWhiteSpace(path))
-                throw new ArgumentException($"Set {name} in appsettings.json beside the executable to the folder that should receive the backup.");
+                throw new ArgumentException($"No backup folder is set. Choose B in the menu, use --backup-folder, or set {DestinationSetting(useWpd)} in appsettings.json beside the executable.");
             return path;
+        }
+
+        /// <summary>Name of the setting that holds the selected transport's backup folder.</summary>
+        public static string DestinationSetting(bool useWpd) => useWpd ? nameof(DestinationPath) : nameof(AfcDestinationPath);
+
+        /// <summary>Changes the selected transport's backup folder after the same checks as the settings file.</summary>
+        public void SetDestinationPath(bool useWpd, string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException(@"Type a full folder path, for example D:\iPhone Backup\.");
+
+            var changed = (AppConfig)MemberwiseClone();
+            if (useWpd) changed.DestinationPath = path;
+            else changed.AfcDestinationPath = path;
+            changed.Validate();
+            DestinationPath = changed.DestinationPath;
+            AfcDestinationPath = changed.AfcDestinationPath;
         }
 
         private static string ValidateDestination(string? path, string name)
@@ -47,15 +60,6 @@ namespace FileCopier
             if (!Path.IsPathFullyQualified(path))
                 throw new ArgumentException($"{name} must be an absolute local or UNC folder path.");
             return Path.GetFullPath(path);
-        }
-
-        public void ValidateSourceFileCount(int foundFiles)
-        {
-            if (foundFiles < MinimumExpectedFiles)
-            {
-                throw new IOException($"Source scan found {foundFiles} files, below configured MinimumExpectedFiles of {MinimumExpectedFiles}. " +
-                    "No files were copied. Check iPhone USB visibility, or update MinimumExpectedFiles if the photo library or SourcePath intentionally changed.");
-            }
         }
     }
 }

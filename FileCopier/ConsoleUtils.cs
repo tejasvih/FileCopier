@@ -1,47 +1,18 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace FileCopier
+﻿namespace FileCopier
 {
-    internal class ConsoleUtils
+    /// <summary>
+    /// Console output with one color per kind of line: headings and run information cyan, folder
+    /// scanning blue, details and skipped files dark gray, copied or verified files green, warnings
+    /// yellow, errors red. Each line restores the default
+    /// color, so plain Console.WriteLine text is never tinted by the line before it.
+    /// </summary>
+    internal static class ConsoleUtils
     {
-        public static string NL = Environment.NewLine; // shortcut
-        public static string NORMAL = Console.IsOutputRedirected ? "" : "\x1b[39m";
-        public static string RED = Console.IsOutputRedirected ? "" : "\x1b[91m";
-        public static string GREEN = Console.IsOutputRedirected ? "" : "\x1b[92m";
-        public static string YELLOW = Console.IsOutputRedirected ? "" : "\x1b[93m";
-        public static string BLUE = Console.IsOutputRedirected ? "" : "\x1b[94m";
-        public static string MAGENTA = Console.IsOutputRedirected ? "" : "\x1b[95m";
-        public static string CYAN = Console.IsOutputRedirected ? "" : "\x1b[96m";
-        public static string GREY = Console.IsOutputRedirected ? "" : "\x1b[97m";
-        public static string BOLD = Console.IsOutputRedirected ? "" : "\x1b[1m";
-        public static string NOBOLD = Console.IsOutputRedirected ? "" : "\x1b[22m";
-        public static string UNDERLINE = Console.IsOutputRedirected ? "" : "\x1b[4m";
-        public static string NOUNDERLINE = Console.IsOutputRedirected ? "" : "\x1b[24m";
-        public static string REVERSE = Console.IsOutputRedirected ? "" : "\x1b[7m";
-        public static string NOREVERSE = Console.IsOutputRedirected ? "" : "\x1b[27m";
-
-        public static void ClearLine()
+        public static void Reset()
         {
             if (Console.IsOutputRedirected) return;
             try
             {
-                Console.Write("\r" + new string(' ', Math.Max(0, Console.WindowWidth - 1)) + "\r");
-            }
-            catch (IOException)
-            {
-                // A detached console cannot provide its window width.
-            }
-        }
-        public static void Reset() 
-        {
-            if (Console.IsOutputRedirected) return;
-            try
-            {
-                Console.CursorVisible = true;
                 Console.ResetColor();
             }
             catch (IOException)
@@ -67,13 +38,12 @@ namespace FileCopier
             }
         }
 
-        private static void SetAppearance(ConsoleColor color)
+        /// <summary>Lets the console show text in any language, such as a phone name in Japanese.</summary>
+        public static void UseUnicodeOutput()
         {
-            if (Console.IsOutputRedirected) return;
             try
             {
-                Console.CursorVisible = false;
-                Console.ForegroundColor = color;
+                Console.OutputEncoding = System.Text.Encoding.UTF8;
             }
             catch (IOException)
             {
@@ -81,39 +51,115 @@ namespace FileCopier
             }
         }
 
-        public static void WriteError(string message)
+        public static void WriteHeading(string message) => WriteLine(message, ConsoleColor.Cyan);
+        public static void WriteStep(string message) => WriteLine(message, ConsoleColor.Blue);
+        public static void WriteDetail(string message) => WriteLine(message, ConsoleColor.DarkGray);
+        public static void WriteDone(string message) => WriteLine(message, ConsoleColor.Green);
+        public static void WriteSkipped(string message) => WriteLine(message, ConsoleColor.DarkGray);
+        public static void WriteWarning(string message) => WriteLine(message, ConsoleColor.Yellow);
+        public static void WriteError(string message) => WriteLine(message, ConsoleColor.Red);
+        public static void WriteSuccess(string message) => WriteLine(message, ConsoleColor.Green);
+
+        /// <summary>Writes a line in the given color, or the default color when none is given.</summary>
+        public static void WriteLine(string message, ConsoleColor? color = null)
         {
-            WriteLine(message, ConsoleColor.Red);
+            if (color is not { } value || Console.IsOutputRedirected)
+            {
+                Console.WriteLine(message);
+                return;
+            }
+
+            // Color codes travel in the same write as the text, so terminals that render the
+            // console asynchronously (Windows Terminal, VS Code) cannot apply them to the wrong text.
+            if (UseVirtualTerminal)
+            {
+                Console.WriteLine(Colorize(message, value));
+                return;
+            }
+
+            var colored = TrySetColor(value);
+            try
+            {
+                Console.WriteLine(message);
+            }
+            finally
+            {
+                if (colored) TryResetColor();
+            }
         }
 
-        public static void WriteWarning(string message)
+        /// <summary>
+        /// Text wrapped in color codes when this console shows them, for text written through a
+        /// TextWriter such as the menu; plain text otherwise.
+        /// </summary>
+        public static string Colorize(string text, ConsoleColor color) =>
+            UseVirtualTerminal ? $"\x1b[{AnsiCode(color)}m{text}\x1b[39m" : text;
+
+        private static readonly bool UseVirtualTerminal = EnableVirtualTerminal();
+
+        // Turns on ANSI color codes for this console; Windows 10 and later support them.
+        private static bool EnableVirtualTerminal()
         {
-            WriteLine(message, ConsoleColor.Yellow);
+            const uint EnableVirtualTerminalProcessing = 0x0004;
+            if (Console.IsOutputRedirected || !OperatingSystem.IsWindows()) return false;
+            var output = GetStdHandle(-11);
+            return GetConsoleMode(output, out var mode) &&
+                ((mode & EnableVirtualTerminalProcessing) != 0 || SetConsoleMode(output, mode | EnableVirtualTerminalProcessing));
         }
 
-        public static void WriteSuccess(string message)
+        private static int AnsiCode(ConsoleColor color) => color switch
         {
-            WriteLine(message, ConsoleColor.Green);
+            ConsoleColor.Black => 30,
+            ConsoleColor.DarkRed => 31,
+            ConsoleColor.DarkGreen => 32,
+            ConsoleColor.DarkYellow => 33,
+            ConsoleColor.DarkBlue => 34,
+            ConsoleColor.DarkMagenta => 35,
+            ConsoleColor.DarkCyan => 36,
+            ConsoleColor.Gray => 37,
+            ConsoleColor.DarkGray => 90,
+            ConsoleColor.Red => 91,
+            ConsoleColor.Green => 92,
+            ConsoleColor.Yellow => 93,
+            ConsoleColor.Blue => 94,
+            ConsoleColor.Magenta => 95,
+            ConsoleColor.Cyan => 96,
+            _ => 97,
+        };
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern nint GetStdHandle(int handle);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool GetConsoleMode(nint handle, out uint mode);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool SetConsoleMode(nint handle, uint mode);
+
+        private static bool TrySetColor(ConsoleColor color)
+        {
+            try
+            {
+                Console.ForegroundColor = color;
+                return true;
+            }
+            catch (IOException)
+            {
+                // Console presentation must not affect transfer results.
+                return false;
+            }
         }
 
-        public static void WriteLine(string message, ConsoleColor color = ConsoleColor.Yellow) 
+        private static void TryResetColor()
         {
-            SetAppearance(color);
-            Console.WriteLine(message);
+            try
+            {
+                Console.ResetColor();
+            }
+            catch (IOException)
+            {
+                // Console presentation must not affect transfer results.
+            }
         }
-
-        public static void Write(string message, ConsoleColor color = ConsoleColor.Yellow) 
-        {
-            SetAppearance(color);
-            Console.Write(message);
-        }
-
-        public static void WriteProgress(string message, int position, int total, ConsoleColor color = ConsoleColor.Yellow)
-        {
-            ClearLine();
-            Write($"\r{message} {YELLOW}{position.ToString("#,##0")} / {total.ToString("#,##0")} {CYAN}{position.GetPercentageCompleted(total)}",color);
-        }
-
-        
     }
 }

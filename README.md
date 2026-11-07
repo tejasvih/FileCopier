@@ -3,6 +3,8 @@
 Back up every photo and video on an iPhone to a Windows folder over USB: original files, byte for byte, including edited versions and Live Photo videos. The phone is only read, never changed, and reruns copy only what is new.
 
 > Not affiliated with, endorsed by, or sponsored by Apple Inc. iPhone is a trademark of Apple Inc.
+>
+> Use at your own risk. The authors are not responsible for any loss of photos or other data. See [Disclaimer](#disclaimer).
 
 ## Why
 
@@ -27,20 +29,26 @@ Photo Copier reads the camera roll through **AFC** (Apple File Conduit), the fil
 ## Quick start
 
 1. Download `PhotoCopier-<version>-win-x64.zip` from [Releases](https://github.com/tejasvih/FileCopier/releases) and extract it. No .NET installation is needed.
-2. Open `appsettings.json` in Notepad and set `AfcDestinationPath` to your backup folder. Double every backslash:
-   ```json
-   "AfcDestinationPath": "D:\\iPhone Backup\\",
+2. Connect the phone by USB, unlock it, and tap **Trust**. If the phone has never been connected to this PC, open the Apple Devices app once.
+3. Double-click `PhotoCopier.exe`. The menu shows the backup folder in use:
    ```
-3. Connect the phone by USB, unlock it, and tap **Trust**. If the phone has never been connected to this PC, open the Apple Devices app once.
-4. Double-click `PhotoCopier.exe` and choose from the menu:
+   Using AFC (recommended).
+   Backup folder: D:\iPhone Backup\
+   Choose an action:
+     1. Copy new and changed photos
+     2. Preview what would be copied (read-only)
+     3. Verify the backup against the iPhone (read-only; reads every file, about as long as a full copy)
+     4. Check the iPhone connection (read-only)
+     5. Copy, skipping files you name
+     6. Show command-line help
+     B. Change backup folder
+     W. Switch to WPD (previous method)
+     Q. Quit
    ```
-   1. Copy photos to D:\iPhone Backup\ (AFC, recommended)
-   2. Preview what would be copied, read-only (AFC)
-   3. Check the iPhone connection, read-only (AFC)
-   4-6. The same using Windows Portable Devices (previous method)
-   7. Show command-line help
-   ```
-   A good first run is 3, then 2, then 1. Press **Q** or **Ctrl+C** to stop after the current phone operation; run again to continue.
+4. Choose **B** and type your backup folder, for example `D:\iPhone Backup\`. Press Enter without typing to keep the current one. The folder is saved in the settings file and shown on the next start. If no folder is set yet, choosing 1, 2 or 3 asks for one first.
+5. A good first run is 4, then 2, then 1. Run 3 before deleting anything from the phone. Press **Q** or **Ctrl+C** to stop after the current file; run again to continue. Pressing **Ctrl+C** a second time stops at once, which is also safe: a backup file is only replaced after its download is complete, so at most a `.partial` file is left. **W** switches every action to Windows Portable Devices and its own backup folder, and **A** switches back.
+
+While copying, each line shows the position in the run, for example `File 1234/64831, folder 12/44`. Copied and verified files are green, files already in the backup with the same size and date are gray (`Skipped`), warnings are yellow and errors red.
 
 Windows SmartScreen may warn that the program is unrecognized because it is not code-signed. Choose **More info**, then **Run anyway**.
 
@@ -54,29 +62,32 @@ Before copying:
 ```powershell
 PhotoCopier                    # menu; copies without the menu when input is redirected
 PhotoCopier --copy             # copy without the menu
+PhotoCopier --verify           # read-only: read every file again and compare it byte for byte with the backup
 PhotoCopier --scan-only        # read-only: list every file and preview what a copy would transfer
 PhotoCopier --diagnose         # read-only connection and folder check
 PhotoCopier --exclude-file "126APPLE\IMG_6742.HEIC"   # skip one file; repeat for more
+PhotoCopier --backup-folder "E:\Other Backup"         # another backup folder for this run only (not saved)
 PhotoCopier --wpd [...]        # use Windows Portable Devices instead of AFC
 PhotoCopier --help             # also -h or /?
 ```
 
 Exit codes: `0` completed, `1` failed or incomplete, `2` canceled.
 
-`--exclude-file` is for a file the phone repeatedly fails to send. The path is relative to `/DCIM` (or to `SourcePath` with `--wpd`). Excluded files are reported as errors, so the run still ends as incomplete. An exclusion that matches no file stops the run before copying, so a typo cannot hide the wrong file. Exclusions cannot be combined with `--diagnose` or `--scan-only`.
+`--exclude-file` is for a file the phone repeatedly fails to send. The path is relative to `/DCIM` (or to `SourcePath` with `--wpd`). Excluded files are reported as errors, so the run still ends as incomplete. An exclusion that matches no file stops the run before copying, so a typo cannot hide the wrong file. Exclusions cannot be combined with `--verify`, `--diagnose` or `--scan-only`.
+
+`--verify` reads every file from the phone again and compares it with its backup copy as the bytes arrive, without writing to the phone or the backup. It takes about as long as a full copy. Each problem is reported as missing from the backup, a different size, or different at a given byte. A copy that differs but has the same size and date is not replaced by copying again, so delete that backup copy first. Verification ends with exit code `0` only when every file matches.
 
 ## Settings
 
-`appsettings.json` sits beside `PhotoCopier.exe`. Comments (`//`) are allowed.
+`appsettings.json` sits beside `PhotoCopier.exe`. Comments (`//`) are allowed. Settings in an optional `appsettings.local.json` beside it override `appsettings.json`.
+
+Changing the backup folder in the menu (**B**) saves it to the file it takes effect from: `appsettings.local.json` when that file sets it, otherwise `appsettings.json`. Only that value changes; comments and other settings are kept. To edit by hand, double every backslash: `"AfcDestinationPath": "D:\\iPhone Backup\\"`.
 
 | Setting | Used by | Meaning |
 |---|---|---|
-| `AfcDestinationPath` | AFC (default) | Backup folder. Required for copying and preview. |
-| `MinimumExpectedFiles` | both | Optional. Stop before copying if the phone lists fewer files than this. `0` turns it off. |
+| `AfcDestinationPath` | AFC (default) | Backup folder. Required for copying, preview and verify. Set it in the menu (**B**). |
 | `SourcePath` | `--wpd` | Phone folder to copy, normally `\Internal Storage`. |
-| `DestinationPath` | `--wpd` | Backup folder for `--wpd`. Must differ from `AfcDestinationPath`. |
-
-`MinimumExpectedFiles` guards against a USB glitch where the phone shows only part of the library and the run would otherwise look complete. Run `--scan-only` once, then set it to about the number of files found. It cannot detect missing files that are offset by newly added ones.
+| `DestinationPath` | `--wpd` | Backup folder for `--wpd`. Must differ from `AfcDestinationPath`. Set it in the menu after **W**, then **B**. |
 
 When building from source, put personal settings in `FileCopier/appsettings.local.json`. That file overrides `appsettings.json`, is ignored by git, and is never included in a published release.
 
@@ -107,6 +118,7 @@ Reliability:
 - Any transport or framing error discards the session. The operation reconnects and retries after 2, 5 and 15 seconds.
 - A file that still fails is recorded and copying continues. Three failed files in a row stop the run (phone unplugged or locked). The exit code stays `1` while any error remains.
 - A file is skipped when the backup copy is not empty and has the same size and modification time. Empty backup files are always retried, and any size difference triggers a fresh copy. This is a size and date check, not a checksum.
+- A file the phone's file system lists as 0 bytes has nothing to copy. It is shown as `empty on the iPhone` and is not an error. Such files are usually left over from an interrupted capture, and the Photos app does not show them. With `--wpd`, a zero size is an error, because the camera interface can list zero for a file that has content.
 
 ### Windows Portable Devices (`--wpd`)
 
@@ -116,12 +128,11 @@ The previous method, kept for comparison. It reads `SourcePath` through the same
 
 | Message | What to do |
 |---|---|
-| `Set AfcDestinationPath in appsettings.json ...` | Set the backup folder (see Quick start). |
+| `No backup folder is set ...` | Choose **B** in the menu and type the backup folder (see Quick start). |
 | `Apple Mobile Device Service (usbmuxd) is not running ...` | Install or open the Apple Devices app, then reconnect the phone. |
 | `No iPhone found through Apple Mobile Device Service ...` | Connect by USB, unlock the phone and tap **Trust**. Try another cable or port. |
 | `This computer has no pairing record for the iPhone ...` | Unlock the phone, tap **Trust**, and open the Apple Devices app once. |
 | `Multiple Apple devices found ...` | Connect only the iPhone you want to copy. |
-| `Source scan found N files, below configured MinimumExpectedFiles ...` | Reconnect and rerun. If photos were deliberately deleted, lower the setting. |
 | `COMException (0x80042008)` with `--wpd` | Invalid storage ID. Reconnect the unlocked phone, allow access, and rerun `--diagnose`. |
 | One file fails on every run | Unplug and reconnect the phone and rerun. If it still fails, skip it with `--exclude-file`. |
 
@@ -130,26 +141,45 @@ The previous method, kept for comparison. It reads `SourcePath` through the same
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
 ```powershell
+./build.ps1                                # tests, then a self-contained PhotoCopier.exe in .\publish
+./build.ps1 -Output D:\Tools\PhotoCopier   # another folder
+./build.ps1 -SkipTests
+```
+
+[build.ps1](build.ps1) uses the same settings as the release build, so the single `PhotoCopier.exe` runs on a PC without .NET. Rebuilding keeps the `appsettings.json` already in the output folder, copies `FileCopier/appsettings.local.json` there if the folder has none, and replaces files from an earlier build. Close Photo Copier first.
+
+For development:
+
+```powershell
 dotnet build PhotoCopier.sln --configuration Release
 dotnet test PhotoCopier.sln --configuration Release
 .\FileCopier\bin\Release\net10.0-windows7.0\PhotoCopier.exe
 ```
 
-The tests need no phone. They cover the AFC protocol client, the property-list codec, edit naming, settings validation, the menu and command line, collision-safe file naming, interrupted, empty and truncated downloads, folder-listing failures, and stream handling.
+The tests need no phone. They cover the AFC protocol client, the property-list codec, edit naming, settings validation, the menu and command line, collision-safe file naming, byte-for-byte verification, interrupted, empty and truncated downloads, folder-listing failures, and stream handling.
 
 Windows Portable Devices access uses [MediaDevices](https://github.com/Bassman2/MediaDevices), built from pinned source with fixes so that listing errors are reported instead of silently skipped. See [Vendor/MediaDevices/README.md](Vendor/MediaDevices/README.md).
 
 ### Releasing
 
-Pushing a version tag runs the tests and publishes a self-contained Windows zip as a GitHub Release:
+Pushing a version tag runs the tests and publishes a self-contained Windows zip as a GitHub Release. [release.ps1](release.ps1) picks the next version, checks that `main` is committed and pushed, runs the tests, and pushes the tag:
 
 ```powershell
-git tag v1.0.0
-git push origin v1.0.0
+./release.ps1                  # next patch version, e.g. v1.0.0 -> v1.0.1
+./release.ps1 -Bump minor      # v1.0.1 -> v1.1.0 (or -Bump major)
+./release.ps1 -Version 2.0.0   # a specific version
+./release.ps1 -WhatIf          # show the next version without releasing
 ```
+
+## Disclaimer
+
+This software is provided "as is", without warranty of any kind, and you use it at your own risk. To the extent permitted by law, the authors and contributors are not liable for any loss, corruption or deletion of photos, videos or other data, for damage to any phone, computer or storage device, or for any other damages arising from its use. See [LICENSE](LICENSE) for the full terms.
+
+- **Keep more than one backup.** Photos are irreplaceable. A backup made by this tool can be incomplete or wrong even when it reports success, for example after a hardware, USB, driver or disk fault.
+- **Check the backup before deleting anything from the phone or from iCloud.** Run Verify (menu 3 or `--verify`), open a sample of photos and videos from the backup folder, and compare the file count with the phone.
+- **Apple can change the phone's interfaces at any time.** This tool uses the Apple Mobile Device Service and the file services Apple's own software uses. These are not public, documented interfaces, and an iOS or Apple Devices update may stop the tool from working or change what it can read.
+- This project is not affiliated with, endorsed by, or sponsored by Apple Inc., and is not supported by Apple.
 
 ## License
 
 [MIT](LICENSE). Third-party components and their licenses are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-
-This software is provided as is, without warranty. Photos are irreplaceable: keep more than one backup, and check the backup before deleting anything from the phone.

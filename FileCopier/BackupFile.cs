@@ -93,6 +93,99 @@ internal static class BackupFile
         }
     }
 
+    /// <summary>
+    /// Reads the phone file and compares it byte for byte with the backup copy, writing nothing.
+    /// Returns null when they match, otherwise why the backup copy does not.
+    /// </summary>
+    public static string? Verify(string destinationPath, ulong length, Action<Stream> download)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+        ArgumentNullException.ThrowIfNull(download);
+        if (length == 0)
+            throw new IOException("The iPhone reports zero bytes for this file; it cannot be verified.");
+
+        var backup = new FileInfo(destinationPath);
+        if (!backup.Exists)
+            return "Missing from the backup. Copy again to add it.";
+        if ((ulong)backup.Length != length)
+            return $"Backup copy has {backup.Length} bytes; the iPhone has {length}. Copy again to replace it.";
+
+        using var comparison = new BackupComparison(backup.FullName);
+        download(comparison);
+        if ((ulong)comparison.Length != length)
+            throw new IOException($"iPhone sent {comparison.Length} bytes; expected {length} bytes.");
+
+        // Same size and date means copying again would skip it, so the copy must be removed first.
+        return comparison.FirstDifference is { } offset
+            ? $"Backup copy differs from the iPhone at byte {offset}. Delete the backup copy, then copy again."
+            : null;
+    }
+
+    /// <summary>
+    /// A write-only stream that compares what the phone sends with the backup file. It never throws
+    /// on a difference, so a mismatch is not mistaken for a transfer failure. A retried download
+    /// rewinds it with SetLength and Position, like a destination file.
+    /// </summary>
+    private sealed class BackupComparison(string backupPath) : Stream
+    {
+        private readonly FileStream backup = new(backupPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            bufferSize: 1 << 20, FileOptions.SequentialScan);
+        private byte[] expected = [];
+        private long compared;
+
+        public long? FirstDifference { get; private set; }
+
+        public override bool CanRead => false;
+        public override bool CanSeek => true;
+        public override bool CanWrite => true;
+        public override long Length => compared;
+
+        public override long Position
+        {
+            get => compared;
+            set
+            {
+                if (value != compared)
+                    throw new NotSupportedException("A backup comparison can only be rewound with SetLength.");
+            }
+        }
+
+        public override void SetLength(long value)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            if (value > compared)
+                throw new NotSupportedException("A backup comparison cannot be extended.");
+            compared = value;
+            if (FirstDifference >= value) FirstDifference = null;
+        }
+
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (expected.Length < buffer.Length) expected = new byte[buffer.Length];
+            backup.Position = compared;
+            var read = backup.ReadAtLeast(expected.AsSpan(0, buffer.Length), buffer.Length, throwOnEndOfStream: false);
+            if (FirstDifference == null)
+            {
+                var common = Math.Min(read, buffer.Length);
+                var index = buffer[..common].CommonPrefixLength(expected.AsSpan(0, common));
+                if (index < buffer.Length) FirstDifference = compared + index;
+            }
+            compared += buffer.Length;
+        }
+
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) backup.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
     private static bool IsReservedName(string name)
     {
         if (name.Equals("CON", StringComparison.OrdinalIgnoreCase) ||

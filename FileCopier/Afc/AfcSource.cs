@@ -33,6 +33,7 @@ internal sealed class AfcSource : IPhoneSource
     public string PhoneName => phoneName;
     public string SourcePath => CameraRollPath;
     public bool IsolatesFailures => true;
+    public bool ReportsExactSizes => true;
 
     public void Connect()
     {

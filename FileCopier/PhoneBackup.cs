@@ -2,14 +2,20 @@ using System.Diagnostics;
 
 namespace FileCopier;
 
-/// <summary>Scans an iPhone source and copies new or changed files to the destination.</summary>
-internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string destinationPath)
+/// <summary>
+/// Scans an iPhone source, then copies new or changed files to the destination or verifies the
+/// backup against the phone.
+/// </summary>
+internal sealed class PhoneBackup(IPhoneSource source, string destinationPath)
 {
     // With failure-isolating sources, a run continues past a failed file but stops when the
     // phone keeps failing (for example, unplugged or locked), instead of failing every file.
     internal const int MaximumConsecutiveFailures = 3;
 
     private readonly Stopwatch stopwatch = new();
+    private bool verifying;
+    private int[] folderNumbers = [];
+    private int folderCount;
 
     public int FolderCount { get; private set; }
     public int DiscoveredFolderCount { get; private set; }
@@ -17,41 +23,17 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
     public int CopiedFiles { get; private set; }
     public int SkippedFiles { get; private set; }
     public int ExcludedFiles { get; private set; }
+    public int EmptyFiles { get; private set; }
+    public int VerifiedFiles { get; private set; }
     public ulong CopiedBytes { get; private set; }
+    public ulong VerifiedBytes { get; private set; }
     public List<(string Path, string Message)> Errors { get; } = [];
 
     public void CopyPhotos(CancellationToken cancellationToken, bool scanOnly = false,
         IReadOnlySet<string>? excludedFiles = null)
     {
-        FolderCount = FoundFiles = CopiedFiles = SkippedFiles = ExcludedFiles = 0;
-        DiscoveredFolderCount = 1;
-        CopiedBytes = 0;
-        Errors.Clear();
-        stopwatch.Restart();
-
-        try
+        Run(cancellationToken, verify: false, sourceFiles =>
         {
-            CheckCancellation(cancellationToken);
-            ConsoleUtils.WriteLine("\nReading iPhone folders (Q or Ctrl+C stops after the current operation)...");
-            var sourceFiles = BackupPlan.Create(destinationPath, CollectFiles(source.OpenRoot(), cancellationToken));
-            FoundFiles = sourceFiles.Count;
-            if (FoundFiles == 0)
-            {
-                throw new IOException("No files found in the source. Check SourcePath, unlock iPhone, and allow photo access before retrying.");
-            }
-
-            // Both transports list the same library (originals, .AAE sidecars, edited renders),
-            // so one expected count guards either against a reduced device view.
-            try
-            {
-                config.ValidateSourceFileCount(FoundFiles);
-            }
-            catch (IOException ex)
-            {
-                RecordError(source.SourcePath, ex);
-                throw;
-            }
-
             if (scanOnly)
             {
                 PreviewCopy(sourceFiles);
@@ -62,10 +44,11 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
             // Match original phone paths, including when backup names have ID suffixes.
             var exclusions = BackupPlan.ResolveExclusions(sourceFiles, excludedFiles);
 
-            ConsoleUtils.WriteLine($"\nFound {FoundFiles} files. Checking destination and copying changes...");
+            ConsoleUtils.WriteHeading($"\nFound {FoundFiles} files in {folderCount} folders. Checking destination and copying changes...");
             var consecutiveFailures = 0;
-            foreach (var file in sourceFiles)
+            for (var index = 0; index < sourceFiles.Count; index++)
             {
+                var file = sourceFiles[index];
                 CheckCancellation(cancellationToken);
                 if (exclusions.Contains(file.RelativePath))
                 {
@@ -73,12 +56,14 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
                     RecordError(file.PhonePath, new IOException("Excluded by request; this source file was not copied or verified."));
                     continue;
                 }
+                if (SkipEmpty(file)) continue;
                 try
                 {
                     if (!BackupFile.ShouldCopy(file.DestinationPath, file.Length, file.LastWriteTime))
                     {
                         SkippedFiles++;
                         consecutiveFailures = 0;
+                        ConsoleUtils.WriteSkipped($"{Progress(index)}. Skipped {SkippedFiles}, same size and date in backup: {RelativeDestination(file)}");
                         continue;
                     }
 
@@ -87,21 +72,75 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
                     CopiedFiles++;
                     CopiedBytes += file.Length;
                     consecutiveFailures = 0;
-                    var relativeDestination = Path.GetRelativePath(destinationPath, file.DestinationPath);
-                    ConsoleUtils.WriteLine($"{stopwatch.Elapsed:hh\\:mm\\:ss} Copied {CopiedFiles}, skipped {SkippedFiles}: {relativeDestination} ({file.Length.ToSize()})");
+                    ConsoleUtils.WriteDone($"{Progress(index)}. Copied {CopiedFiles}, skipped {SkippedFiles}: {RelativeDestination(file)} ({file.Length.ToSize()})");
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    RecordError(file.PhonePath, ex);
-                    if (source.IsolatesFailures && ++consecutiveFailures < MaximumConsecutiveFailures)
-                        continue;
-
-                    ConsoleUtils.WriteWarning(source.IsolatesFailures
-                        ? $"Copying stopped after {MaximumConsecutiveFailures} consecutive failed files. Reconnect and unlock the iPhone, then rerun to continue."
-                        : "Copying stopped at the first failed file. Reconnect the iPhone before retrying a failed transfer.");
-                    throw;
+                    if (StopAfterFailure(file, ex, ref consecutiveFailures)) throw;
                 }
             }
+        });
+    }
+
+    /// <summary>
+    /// Reads every file from the phone again and compares it byte for byte with its backup copy.
+    /// Writes nothing to the phone or the backup.
+    /// </summary>
+    public void VerifyBackup(CancellationToken cancellationToken)
+    {
+        Run(cancellationToken, verify: true, sourceFiles =>
+        {
+            ConsoleUtils.WriteHeading($"\nFound {FoundFiles} files in {folderCount} folders. Reading each one from the iPhone and comparing it with the backup...");
+            var consecutiveFailures = 0;
+            for (var index = 0; index < sourceFiles.Count; index++)
+            {
+                var file = sourceFiles[index];
+                CheckCancellation(cancellationToken);
+                if (SkipEmpty(file)) continue;
+                try
+                {
+                    var difference = BackupFile.Verify(file.DestinationPath, file.Length, file.Download);
+                    consecutiveFailures = 0;
+                    if (difference != null)
+                    {
+                        RecordError(file.PhonePath, difference);
+                        continue;
+                    }
+
+                    VerifiedFiles++;
+                    VerifiedBytes += file.Length;
+                    ConsoleUtils.WriteDone($"{Progress(index)}. Verified {VerifiedFiles}: {RelativeDestination(file)} ({file.Length.ToSize()})");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    if (StopAfterFailure(file, ex, ref consecutiveFailures)) throw;
+                }
+            }
+        });
+    }
+
+    private void Run(CancellationToken cancellationToken, bool verify, Action<IReadOnlyList<SourceFile>> action)
+    {
+        FolderCount = FoundFiles = CopiedFiles = SkippedFiles = ExcludedFiles = EmptyFiles = VerifiedFiles = 0;
+        DiscoveredFolderCount = 1;
+        CopiedBytes = VerifiedBytes = 0;
+        Errors.Clear();
+        verifying = verify;
+        stopwatch.Restart();
+
+        try
+        {
+            CheckCancellation(cancellationToken);
+            ConsoleUtils.WriteHeading("\nReading iPhone folders (Q or Ctrl+C stops after the current file; Ctrl+C twice stops at once)...");
+            var sourceFiles = BackupPlan.Create(destinationPath, CollectFiles(source.OpenRoot(), cancellationToken));
+            FoundFiles = sourceFiles.Count;
+            if (FoundFiles == 0)
+            {
+                throw new IOException("No files found in the source. Check SourcePath, unlock iPhone, and allow photo access before retrying.");
+            }
+
+            NumberFolders(sourceFiles);
+            action(sourceFiles);
         }
         finally
         {
@@ -109,13 +148,63 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
         }
     }
 
+    // Numbers each planned file's backup folder in the order the run reaches it.
+    private void NumberFolders(IReadOnlyList<SourceFile> files)
+    {
+        var numbers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        folderNumbers = new int[files.Count];
+        for (var index = 0; index < files.Count; index++)
+        {
+            var folder = Path.GetDirectoryName(files[index].RelativePath) ?? "";
+            if (!numbers.TryGetValue(folder, out var number))
+                numbers.Add(folder, number = numbers.Count + 1);
+            folderNumbers[index] = number;
+        }
+        folderCount = numbers.Count;
+    }
+
+    /// <summary>For example "00:12:03 File 1234/64831, folder 12/44".</summary>
+    internal string Progress(int index) =>
+        $"{stopwatch.Elapsed:hh\\:mm\\:ss} File {index + 1}/{FoundFiles}, folder {folderNumbers[index]}/{folderCount}";
+
     // Read-only: compares the plan with the destination without reading file contents.
     private void PreviewCopy(IReadOnlyList<SourceFile> sourceFiles)
     {
-        var toCopy = sourceFiles.Where(file => BackupFile.ShouldCopy(file.DestinationPath, file.Length, file.LastWriteTime)).ToList();
+        EmptyFiles = sourceFiles.Count(IsEmptyOnPhone);
+        var toCopy = sourceFiles.Where(file => !IsEmptyOnPhone(file) &&
+            BackupFile.ShouldCopy(file.DestinationPath, file.Length, file.LastWriteTime)).ToList();
         var bytesToCopy = toCopy.Aggregate(0UL, (total, file) => total + file.Length);
-        ConsoleUtils.WriteLine($"\nCopy preview for {destinationPath}: {sourceFiles.Count - toCopy.Count} up to date; {toCopy.Count} to copy ({bytesToCopy.ToSize()}).");
+        var emptyNote = EmptyFiles > 0 ? $"; {EmptyFiles} empty on the iPhone (nothing to copy)" : "";
+        ConsoleUtils.WriteHeading($"\nCopy preview for {destinationPath}: {sourceFiles.Count - toCopy.Count - EmptyFiles} up to date; {toCopy.Count} to copy ({bytesToCopy.ToSize()}){emptyNote}.");
     }
+
+    // An empty file the phone's file system reports has no content to lose. Sources whose
+    // sizes are not exact keep zero as an error (see BackupFile.Copy).
+    private bool IsEmptyOnPhone(SourceFile file) => file.Length == 0 && source.ReportsExactSizes;
+
+    private bool SkipEmpty(SourceFile file)
+    {
+        if (!IsEmptyOnPhone(file)) return false;
+        EmptyFiles++;
+        ConsoleUtils.WriteWarning($"{file.PhonePath}: empty on the iPhone (0 bytes); nothing to {(verifying ? "verify" : "copy")}.");
+        return true;
+    }
+
+    /// <summary>Records a failed phone read and returns true when the run must stop.</summary>
+    private bool StopAfterFailure(SourceFile file, Exception exception, ref int consecutiveFailures)
+    {
+        RecordError(file.PhonePath, exception);
+        if (source.IsolatesFailures && ++consecutiveFailures < MaximumConsecutiveFailures)
+            return false;
+
+        var stopped = verifying ? "Verification stopped" : "Copying stopped";
+        ConsoleUtils.WriteWarning(source.IsolatesFailures
+            ? $"{stopped} after {MaximumConsecutiveFailures} consecutive failed files. Reconnect and unlock the iPhone, then rerun."
+            : $"{stopped} at the first failed file. Reconnect the iPhone before retrying.");
+        return true;
+    }
+
+    private string RelativeDestination(SourceFile file) => Path.GetRelativePath(destinationPath, file.DestinationPath);
 
     private List<SourceFile> CollectFiles(PhoneFolderEntry rootEntry, CancellationToken cancellationToken)
     {
@@ -135,7 +224,7 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
         IEnumerable<SourceFolder> ReadChildFolders(SourceFolder current)
         {
             FolderCount++;
-            ConsoleUtils.WriteLine($"Scanning folder {FolderCount}/{DiscoveredFolderCount}: {current.Entry.PhonePath}...");
+            ConsoleUtils.WriteStep($"Scanning folder {FolderCount}/{DiscoveredFolderCount}: {current.Entry.PhonePath}...");
             foreach (var entry in current.Entry.Enumerate())
             {
                 CheckCancellation(cancellationToken);
@@ -144,7 +233,7 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
                     current.Files.Add(file);
                     if (current.Files.Count % 100 == 0)
                     {
-                        ConsoleUtils.WriteLine($"  {current.Entry.PhonePath}: read metadata for {current.Files.Count} files...");
+                        ConsoleUtils.WriteDetail($"  {current.Entry.PhonePath}: read metadata for {current.Files.Count} files...");
                     }
                     continue;
                 }
@@ -173,7 +262,7 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
             }
             if (current.RelativePath.Length == 0)
             {
-                ConsoleUtils.WriteLine($"Discovered {DiscoveredFolderCount - 1} source subfolders; all are queued for scanning.");
+                ConsoleUtils.WriteHeading($"Discovered {DiscoveredFolderCount - 1} source subfolders; all are queued for scanning.");
             }
         }
 
@@ -204,13 +293,15 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
             {
                 current.Files.Clear();
             }
-            ConsoleUtils.WriteLine($"  Read {folderFiles} files. Folders visited: {FolderCount}/{DiscoveredFolderCount}.");
+            ConsoleUtils.WriteDetail($"  Read {folderFiles} files. Folders visited: {FolderCount}/{DiscoveredFolderCount}.");
         }
     }
 
-    private void RecordError(string path, Exception exception)
+    private void RecordError(string path, Exception exception) =>
+        RecordError(path, $"{exception.Message} (0x{exception.HResult:X8})");
+
+    private void RecordError(string path, string message)
     {
-        var message = $"{exception.Message} (0x{exception.HResult:X8})";
         Errors.Add((path, message));
         ConsoleUtils.WriteError($"{path}: {message}");
     }
@@ -226,7 +317,11 @@ internal sealed class PhoneBackup(AppConfig config, IPhoneSource source, string 
 
     public void PrintSummary()
     {
-        Console.WriteLine($"\nFolders visited: {FolderCount}/{DiscoveredFolderCount} (including source root); files found: {FoundFiles}; copied: {CopiedFiles} ({CopiedBytes.ToSize()}); skipped: {SkippedFiles}; excluded: {ExcludedFiles}; errors: {Errors.Count}.");
+        var work = verifying
+            ? $"verified identical: {VerifiedFiles} ({VerifiedBytes.ToSize()})"
+            : $"copied: {CopiedFiles} ({CopiedBytes.ToSize()}); skipped: {SkippedFiles}; excluded: {ExcludedFiles}";
+        ConsoleUtils.WriteHeading($"\nBackup folder: {destinationPath}");
+        Console.WriteLine($"Folders visited: {FolderCount}/{DiscoveredFolderCount} (including source root); files found: {FoundFiles}; {work}; empty on phone: {EmptyFiles}; errors: {Errors.Count}.");
     }
 
     private sealed record SourceFolder(PhoneFolderEntry Entry, string RelativePath)

@@ -50,11 +50,13 @@ public sealed class PhoneBackupTests : IDisposable
     {
         WriteBackup(Path.Combine("100APPLE", "IMG_6399.AAE"), [1, 2, 3]);
         var source = new FakeSource(isolatesFailures: true,
-            Photo("IMG_6399.AAE", [1, 2, 3]), Photo("IMG_6400.HEIC", [4]));
+            Photo("IMG_6399.AAE", [1, 2, 3]), Photo("IMG_6400.HEIC", [4]), Photo("IMG_6401.MOV", []));
 
         var backup = Run(source, scanOnly: true);
 
-        Assert.Equal(2, backup.FoundFiles);
+        Assert.Equal(3, backup.FoundFiles);
+        Assert.Equal(1, backup.EmptyFiles);
+        Assert.Empty(backup.Errors);
         Assert.Empty(source.Downloads);
         Assert.Equal(0, backup.CopiedFiles);
     }
@@ -73,11 +75,94 @@ public sealed class PhoneBackupTests : IDisposable
         Assert.Empty(second.Downloads);
     }
 
+    [Fact]
+    public void EmptyFileOnExactSizeSourceIsReportedWithoutAnError()
+    {
+        var source = new FakeSource(isolatesFailures: true,
+            Photo("IMG_3941.MOV", []), Photo("IMG_3942.HEIC", [7]));
+
+        var backup = Run(source);
+
+        Assert.Empty(backup.Errors);
+        Assert.Equal(1, backup.EmptyFiles);
+        Assert.Equal(1, backup.CopiedFiles);
+        Assert.Equal(["IMG_3942.HEIC"], source.Downloads);
+        Assert.False(File.Exists(Path.Combine(root, "100APPLE", "IMG_3941.MOV")));
+    }
+
+    [Fact]
+    public void EmptyFileOnInexactSizeSourceIsAnError()
+    {
+        var source = new FakeSource(isolatesFailures: true, Photo("IMG_3941.MOV", []))
+        {
+            ReportsExactSizes = false,
+        };
+
+        var backup = Run(source);
+
+        Assert.Single(backup.Errors);
+        Assert.Equal(0, backup.EmptyFiles);
+        Assert.False(File.Exists(Path.Combine(root, "100APPLE", "IMG_3941.MOV")));
+    }
+
+    [Fact]
+    public void VerifyReportsDifferentAndMissingCopiesAndWritesNothing()
+    {
+        WriteBackup(Path.Combine("100APPLE", "IMG_0001.HEIC"), [1, 2, 3]);
+        WriteBackup(Path.Combine("100APPLE", "IMG_0002.HEIC"), [4, 5, 6]);
+        var source = new FakeSource(isolatesFailures: true,
+            Photo("IMG_0001.HEIC", [1, 2, 3]), Photo("IMG_0002.HEIC", [4, 0, 6]),
+            Photo("IMG_0003.HEIC", [7]), Photo("IMG_0004.MOV", []));
+
+        var backup = Verify(source);
+
+        Assert.Equal(1, backup.VerifiedFiles);
+        Assert.Equal(1, backup.EmptyFiles);
+        Assert.Equal(["/DCIM/100APPLE/IMG_0002.HEIC", "/DCIM/100APPLE/IMG_0003.HEIC"], backup.Errors.Select(error => error.Path));
+        Assert.Equal(["IMG_0001.HEIC", "IMG_0002.HEIC"], source.Downloads);
+        Assert.Equal([4, 5, 6], File.ReadAllBytes(Path.Combine(root, "100APPLE", "IMG_0002.HEIC")));
+        Assert.False(File.Exists(Path.Combine(root, "100APPLE", "IMG_0003.HEIC")));
+    }
+
+    [Fact]
+    public void VerifyContinuesPastAFailedReadOnAnIsolatingSource()
+    {
+        WriteBackup(Path.Combine("100APPLE", "IMG_0001.HEIC"), [1, 2, 3, 4]);
+        WriteBackup(Path.Combine("100APPLE", "IMG_0002.HEIC"), [5]);
+        var source = new FakeSource(isolatesFailures: true, Failing("IMG_0001.HEIC"), Photo("IMG_0002.HEIC", [5]));
+
+        var backup = Verify(source);
+
+        Assert.Single(backup.Errors);
+        Assert.Equal(1, backup.VerifiedFiles);
+    }
+
+    [Fact]
+    public void ProgressCountsFilesAndFoldersOfThePlan()
+    {
+        var source = new FakeSource(isolatesFailures: true, Photo("IMG_0001.HEIC", [1]), Photo("IMG_0002.HEIC", [2]))
+        {
+            SecondFolder = [Photo("IMG_0003.HEIC", [3])],
+        };
+
+        var backup = Run(source);
+
+        // The scanner reaches the last listed folder first, so 101APPLE is folder 1.
+        Assert.EndsWith("File 1/3, folder 1/2", backup.Progress(0));
+        Assert.EndsWith("File 2/3, folder 2/2", backup.Progress(1));
+        Assert.EndsWith("File 3/3, folder 2/2", backup.Progress(2));
+    }
+
+    private PhoneBackup Verify(FakeSource source)
+    {
+        var backup = new PhoneBackup(source, root);
+        backup.VerifyBackup(CancellationToken.None);
+        return backup;
+    }
+
     private PhoneBackup Run(FakeSource source, bool scanOnly = false)
     {
-        var config = new AppConfig { MinimumExpectedFiles = 0 };
-        config.Validate();
-        var backup = new PhoneBackup(config, source, root);
+        var backup = new PhoneBackup(source, root);
         backup.CopyPhotos(CancellationToken.None, scanOnly);
         return backup;
     }
@@ -101,16 +186,24 @@ public sealed class PhoneBackupTests : IDisposable
         public string PhoneName => "Test iPhone";
         public string SourcePath => "/DCIM";
         public bool IsolatesFailures => isolatesFailures;
+        public bool ReportsExactSizes { get; init; } = true;
         public void Connect() { }
         public void Diagnose() { }
         public void Dispose() { }
 
-        public PhoneFolderEntry OpenRoot() => new("", "/DCIM", () =>
-            [new PhoneFolderEntry("100APPLE", "/DCIM/100APPLE", () => files.Select(File))]);
+        public (string Name, byte[]? Content)[] SecondFolder { get; init; } = [];
 
-        private PhoneEntry File((string Name, byte[]? Content) file)
+        public PhoneFolderEntry OpenRoot() => new("", "/DCIM", () =>
+            SecondFolder.Length == 0
+                ? [Folder("100APPLE", files)]
+                : [Folder("100APPLE", files), Folder("101APPLE", SecondFolder)]);
+
+        private PhoneFolderEntry Folder(string name, (string Name, byte[]? Content)[] contents) =>
+            new(name, $"/DCIM/{name}", () => contents.Select(file => File(name, file)));
+
+        private PhoneEntry File(string folder, (string Name, byte[]? Content) file)
         {
-            var path = $"/DCIM/100APPLE/{file.Name}";
+            var path = $"/DCIM/{folder}/{file.Name}";
             return new PhoneFileEntry(file.Name, path, path, path, (ulong)(file.Content?.Length ?? 4),
                 modified, modified, destination =>
                 {
