@@ -14,12 +14,14 @@ namespace FileCopier.Afc;
 /// under the names Windows (WPD) gives them: FullSizeRender.ext as IMG_En.EXT and
 /// Adjustments.plist as IMG_n.AAE; a camera-roll IMG_n.AAE of an edited item becomes
 /// IMG_On.AAE. Other files there (Penultimate*, previews) are the Photos app's working
-/// files, which Windows does not export either.
+/// files, which Windows does not export either. Photos synced onto the phone from a
+/// computer (iTunes/Finder sync) live in /PhotoData/Sync/100SYNCD and keep that folder name.
 /// </remarks>
 internal sealed class AfcSource : IPhoneSource
 {
     public const string CameraRollPath = "/DCIM";
     public const string EditsPath = "/PhotoData/Mutations/DCIM";
+    public const string SyncedPath = "/PhotoData/Sync";
     private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15)];
 
     private UsbmuxDevice? device;
@@ -65,6 +67,10 @@ internal sealed class AfcSource : IPhoneSource
         var editFolders = ListDirectories(EditsPath);
         var editedItems = editFolders.Sum(name => Run(client => client.ReadDirectory($"{EditsPath}/{name}")).Count);
         Console.WriteLine($"{EditsPath} accessible: {editedItems} edited items in {editFolders.Count} folders.");
+
+        var syncedFolders = ListDirectories(SyncedPath);
+        var syncedFiles = syncedFolders.Sum(name => Run(client => client.ReadDirectory($"{SyncedPath}/{name}")).Count);
+        Console.WriteLine($"{SyncedPath} accessible: {syncedFiles} photos synced from a computer in {syncedFolders.Count} folders.");
     }
 
     public PhoneFolderEntry OpenRoot() => new("", CameraRollPath, EnumerateRoot);
@@ -80,6 +86,13 @@ internal sealed class AfcSource : IPhoneSource
         // Edits whose original folder is gone are still backed up.
         foreach (var name in editFolders.Order(StringComparer.Ordinal))
             yield return CameraFolder(name);
+
+        // Library items synced from a computer are not in the camera roll.
+        foreach (var name in ListDirectories(SyncedPath))
+        {
+            var path = $"{SyncedPath}/{name}";
+            yield return new PhoneFolderEntry(name, path, () => Enumerate(path));
+        }
     }
 
     private PhoneFolderEntry CameraFolder(string name) =>

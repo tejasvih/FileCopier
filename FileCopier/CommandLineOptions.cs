@@ -23,7 +23,7 @@ internal sealed record CommandLineOptions(CommandLineMode Mode, IReadOnlySet<str
             if (args[index] == "--exclude-file")
             {
                 if (++index >= args.Length || string.IsNullOrWhiteSpace(args[index]) ||
-                    args[index].StartsWith("--", StringComparison.Ordinal) || args[index] == "-h")
+                    args[index].StartsWith("--", StringComparison.Ordinal) || args[index] is "-h" or "/?")
                 {
                     throw new ArgumentException("--exclude-file requires a relative phone file path.");
                 }
@@ -40,13 +40,14 @@ internal sealed record CommandLineOptions(CommandLineMode Mode, IReadOnlySet<str
 
             var requestedMode = args[index] switch
             {
+                "--copy" => CommandLineMode.Copy,
                 "--diagnose" => CommandLineMode.Diagnose,
                 "--scan-only" => CommandLineMode.ScanOnly,
-                "--help" or "-h" => CommandLineMode.Help,
+                "--help" or "-h" or "/?" => CommandLineMode.Help,
                 _ => throw new ArgumentException($"Unknown argument: '{args[index]}'.")
             };
             if (explicitMode)
-                throw new ArgumentException("Specify only one mode: --diagnose, --scan-only, or --help.");
+                throw new ArgumentException("Specify only one mode: --copy, --diagnose, --scan-only, or --help.");
 
             mode = requestedMode;
             explicitMode = true;

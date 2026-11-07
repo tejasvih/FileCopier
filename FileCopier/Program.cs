@@ -19,19 +19,11 @@ internal class Program
             return 1;
         }
 
-        if (options.Mode == CommandLineMode.Help)
+        // A person starting the app without parameters picks an action; scripts keep copying.
+        var showMenu = args.Length == 0 && !Console.IsInputRedirected;
+        if (!showMenu && options.Mode == CommandLineMode.Help)
         {
-            Console.WriteLine("iPhonePhotoCopier [--wpd] [--exclude-file <relative-path>]...");
-            Console.WriteLine("iPhonePhotoCopier [--wpd] --diagnose | --scan-only | --help");
-            Console.WriteLine("Configure appsettings.json beside the executable.");
-            Console.WriteLine("By default photos are read through AFC (Apple Mobile Device Service) from the camera roll /DCIM");
-            Console.WriteLine("  and copied to AfcDestinationPath.");
-            Console.WriteLine("--wpd reads SourcePath through Windows Portable Devices instead (the Explorer view)");
-            Console.WriteLine("  and copies to DestinationPath.");
-            Console.WriteLine("--diagnose checks photo-folder access without downloading photos.");
-            Console.WriteLine("--scan-only scans every source folder and file without downloading photos.");
-            Console.WriteLine("--exclude-file skips one phone file relative to the source (/DCIM, or SourcePath with --wpd); repeat for more files.");
-            Console.WriteLine("Exclusions apply only while copying. Excluded files keep the backup incomplete.");
+            PrintHelp();
             return 0;
         }
 
@@ -53,6 +45,18 @@ internal class Program
             config.Validate();
 
             Console.WriteLine("iPhone Photo Copier, Calibre Technologies");
+            if (showMenu)
+            {
+                var chosen = StartMenu.Show(config, Console.In, Console.Out);
+                if (chosen == null) return 0;
+                if (chosen.Mode == CommandLineMode.Help)
+                {
+                    PrintHelp();
+                    return 0;
+                }
+                options = chosen;
+            }
+
             // The COM worker belongs to the process. Close the phone first, then the manager.
             using var deviceManager = options.UseWpd ? MediaDeviceManager.Instance : null;
             using IPhoneSource phone = options.UseWpd ? new WpdSource(config.SourcePath) : new AfcSource();
@@ -108,6 +112,30 @@ internal class Program
         {
             Console.CancelKeyPress -= onCancel;
             ConsoleUtils.Reset();
+            // A window opened by double-clicking closes on exit; keep the summary readable.
+            if (showMenu)
+            {
+                Console.Write("\nPress Enter to close.");
+                Console.ReadLine();
+            }
         }
+    }
+
+    private static void PrintHelp()
+    {
+        Console.WriteLine("iPhonePhotoCopier                 (no parameters: choose an action from a menu)");
+        Console.WriteLine("iPhonePhotoCopier [--wpd] [--copy] [--exclude-file <relative-path>]...");
+        Console.WriteLine("iPhonePhotoCopier [--wpd] --diagnose | --scan-only");
+        Console.WriteLine("iPhonePhotoCopier --help | -h | /?");
+        Console.WriteLine("Configure appsettings.json beside the executable.");
+        Console.WriteLine("By default photos are read through AFC (Apple Mobile Device Service) from the camera roll /DCIM");
+        Console.WriteLine("  and copied to AfcDestinationPath.");
+        Console.WriteLine("--wpd reads SourcePath through Windows Portable Devices instead (the Explorer view)");
+        Console.WriteLine("  and copies to DestinationPath.");
+        Console.WriteLine("--copy copies without showing the menu (the default when input is redirected).");
+        Console.WriteLine("--diagnose checks photo-folder access without downloading photos.");
+        Console.WriteLine("--scan-only scans every source folder and file and previews the copy, without downloading photos.");
+        Console.WriteLine("--exclude-file skips one phone file relative to the source (/DCIM, or SourcePath with --wpd); repeat for more files.");
+        Console.WriteLine("Exclusions apply only while copying. Excluded files keep the backup incomplete.");
     }
 }

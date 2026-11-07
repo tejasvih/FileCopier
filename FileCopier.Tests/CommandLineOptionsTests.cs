@@ -26,10 +26,12 @@ public sealed class CommandLineOptionsTests
     }
 
     [Theory]
+    [InlineData("--copy", "Copy")]
     [InlineData("--diagnose", "Diagnose")]
     [InlineData("--scan-only", "ScanOnly")]
     [InlineData("--help", "Help")]
     [InlineData("-h", "Help")]
+    [InlineData("/?", "Help")]
     public void ExistingModeFlagsKeepTheirDistinctBehavior(string flag, string expectedMode)
     {
         var options = CommandLineOptions.Parse([flag]);
@@ -58,10 +60,18 @@ public sealed class CommandLineOptionsTests
     [InlineData("--scan-only")]
     [InlineData("--help")]
     [InlineData("-h")]
+    [InlineData("/?")]
     public void ExclusionsCannotChangeNonCopyModesRegardlessOfArgumentOrder(string mode)
     {
         Assert.Throws<ArgumentException>(() => CommandLineOptions.Parse([mode, "--exclude-file", @"202409_a\IMG_E7443.MOV"]));
         Assert.Throws<ArgumentException>(() => CommandLineOptions.Parse(["--exclude-file", @"202409_a\IMG_E7443.MOV", mode]));
+    }
+
+    [Fact]
+    public void HelpSwitchIsNotTakenAsAnExcludedPath()
+    {
+        var error = Assert.Throws<ArgumentException>(() => CommandLineOptions.Parse(["--exclude-file", "/?"]));
+        Assert.Equal("--exclude-file requires a relative phone file path.", error.Message);
     }
 
     [Theory]
@@ -69,6 +79,8 @@ public sealed class CommandLineOptionsTests
     [InlineData("--diagnose", "--diagnose")]
     [InlineData("--scan-only", "--scan-only")]
     [InlineData("--help", "-h")]
+    [InlineData("--copy", "--scan-only")]
+    [InlineData("/?", "--copy")]
     public void DuplicateOrConflictingModesAreRejected(string first, string second)
     {
         Assert.Throws<ArgumentException>(() => CommandLineOptions.Parse([first, second]));
